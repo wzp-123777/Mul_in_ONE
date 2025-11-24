@@ -53,13 +53,16 @@ export interface Session {
   tenant_id: string;
   user_id: string;
   created_at: string;
+  user_persona?: string;
 }
 
 // ...existing code...
-export const createSession = async (): Promise<string> => {
+export const createSession = async (user_persona?: string): Promise<string> => {
   // Params injected by interceptor
-  const response = await api.post<Session>('/sessions');
-  return response.data.id;
+  const response = await api.post<{ session_id: string }>('/sessions', null, {
+    params: user_persona ? { user_persona } : {}
+  });
+  return response.data.session_id;
 };
 
 export const getSessions = async (): Promise<Session[]> => {

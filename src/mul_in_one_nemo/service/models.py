@@ -20,6 +20,7 @@ class SessionRecord:
     tenant_id: str
     user_id: str
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    user_persona: Optional[str] = None
 
 
 @dataclass
@@ -29,6 +30,7 @@ class SessionMessage:
     sender: str
     target_personas: Optional[list[str]] = None
     history: Optional[list[dict[str, str]]] = None
+    user_persona: Optional[str] = None
 
 
 @dataclass

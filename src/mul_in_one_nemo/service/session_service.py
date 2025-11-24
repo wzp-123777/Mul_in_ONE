@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import uuid
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -75,69 +76,80 @@ class SessionRuntime:
     async def _worker_loop(self) -> None:
         while True:
             message = await self._request_queue.get()
-            agent_sender = self._resolve_agent_sender(message)
-            response_id = self._generate_agent_message_id(agent_sender)
-            await self._publish_event(
-                SessionStreamEvent(
-                    event="agent.start",
-                    data={
-                        "message_id": response_id,
-                        "sender": agent_sender,
-                        "session_id": self.record.id,
-                        "timestamp": self._now_iso(),
-                    },
-                )
-            )
-            stream = await self.adapter.invoke_stream(self.record, message)
-            buffer: List[str] = []
-            async for chunk in stream:
-                text = str(chunk)
-                buffer.append(text)
-                await self._publish_event(
-                    SessionStreamEvent(
-                        event="agent.chunk",
-                        data={
-                            "message_id": response_id,
-                            "sender": agent_sender,
-                            "content": text,
-                        },
+            stream = self.adapter.invoke_stream(self.record, message)
+            if inspect.isawaitable(stream):
+                stream = await stream
+            trackers: Dict[str, Dict[str, Any]] = {}
+            async for raw_event in stream:
+                await self._handle_adapter_event(raw_event, trackers)
+
+            # Flush any trackers that did not receive an explicit agent.end
+            for sender in list(trackers.keys()):
+                tracker = trackers.pop(sender)
+                final_content = "".join(tracker.get("buffer", []))
+                payload = {
+                    "message_id": tracker.get("id"),
+                    "sender": sender,
+                    "content": final_content,
+                    "session_id": self.record.id,
+                    "timestamp": self._now_iso(),
+                }
+                persisted_record = None
+                if final_content:
+                    persisted_record = await self.repository.add_message(
+                        self.record.id,
+                        sender=sender,
+                        content=final_content,
                     )
-                )
-            final_content = "".join(buffer)
-            persisted_record = None
-            if final_content:
-                persisted_record = await self.repository.add_message(
-                    self.record.id,
-                    sender=agent_sender,
-                    content=final_content,
-                )
-            end_payload = {
-                "message_id": response_id,
-                "sender": agent_sender,
-                "content": final_content,
-                "timestamp": self._now_iso(),
-            }
-            if persisted_record:
-                end_payload["persisted_message_id"] = persisted_record.id
-            await self._publish_event(
-                SessionStreamEvent(
-                    event="agent.end",
-                    data=end_payload,
-                )
+                if persisted_record:
+                    payload["persisted_message_id"] = persisted_record.id
+                await self._publish_event(SessionStreamEvent(event="agent.end", data=payload))
+
+    async def _handle_adapter_event(self, event: Any, trackers: Dict[str, Dict[str, Any]]) -> None:
+        normalized = event if isinstance(event, dict) else {"event": "agent.chunk", "data": {"content": str(event)}}
+        event_type = normalized.get("event") or "agent.chunk"
+        data = dict(normalized.get("data") or {})
+        sender = data.get("sender")
+
+        if event_type in {"agent.start", "agent.chunk", "agent.end"} and sender:
+            tracker = trackers.setdefault(
+                sender,
+                {
+                    "id": self._generate_agent_message_id(sender),
+                    "buffer": [],
+                },
             )
+            data.setdefault("message_id", tracker["id"])
+            data.setdefault("session_id", self.record.id)
+
+            if event_type == "agent.start":
+                data.setdefault("timestamp", self._now_iso())
+            elif event_type == "agent.chunk":
+                content = str(data.get("content", ""))
+                tracker["buffer"].append(content)
+                data["content"] = content
+            elif event_type == "agent.end":
+                final_content = data.get("content") or "".join(tracker.get("buffer", []))
+                data["content"] = final_content
+                data.setdefault("timestamp", self._now_iso())
+                persisted_record = None
+                if final_content:
+                    persisted_record = await self.repository.add_message(
+                        self.record.id,
+                        sender=sender,
+                        content=final_content,
+                    )
+                if persisted_record:
+                    data["persisted_message_id"] = persisted_record.id
+                trackers.pop(sender, None)
+
+        await self._publish_event(SessionStreamEvent(event=event_type, data=data))
 
     async def _publish_event(self, event: SessionStreamEvent) -> None:
         if not self._subscriber_queues:
             return
         for queue in list(self._subscriber_queues):
             await queue.put(event)
-
-    def _resolve_agent_sender(self, message: SessionMessage) -> str:
-        if message.target_personas:
-            for persona in message.target_personas:
-                if persona:
-                    return persona
-        return "assistant"
 
     @staticmethod
     def _generate_agent_message_id(sender: str) -> str:
@@ -164,8 +176,8 @@ class SessionService:
         self._runtimes: Dict[str, SessionRuntime] = {}
         self._history_limit = history_limit
 
-    async def create_session(self, tenant_id: str, user_id: str) -> str:
-        record = await self._repository.create(tenant_id, user_id)
+    async def create_session(self, tenant_id: str, user_id: str, *, user_persona: str | None = None) -> str:
+        record = await self._repository.create(tenant_id, user_id, user_persona=user_persona)
         self._ensure_runtime(record)
         return record.id
 
@@ -176,7 +188,9 @@ class SessionService:
         await self._repository.add_message(message.session_id, sender=message.sender, content=message.content)
         history_records = await self._repository.list_messages(message.session_id, limit=self._history_limit)
         history_payload = [{"sender": r.sender, "content": r.content} for r in history_records]
-        enriched_message = replace(message, history=history_payload)
+        if record.user_persona:
+            history_payload.insert(0, {"sender": "user_persona", "content": record.user_persona})
+        enriched_message = replace(message, history=history_payload, user_persona=record.user_persona)
         runtime = self._ensure_runtime(record)
         await runtime.enqueue(enriched_message)
 
@@ -187,10 +201,20 @@ class SessionService:
         runtime = self._ensure_runtime(record)
         return runtime.subscribe()
 
+    async def update_user_persona(self, session_id: str, user_persona: str | None) -> SessionRecord:
+        try:
+            record = await self._repository.update_user_persona(session_id, user_persona)
+        except ValueError as exc:
+            raise SessionNotFoundError(session_id) from exc
+        self._ensure_runtime(record)
+        return record
+
     def _ensure_runtime(self, record: SessionRecord) -> SessionRuntime:
         runtime = self._runtimes.get(record.id)
         if runtime is None:
             runtime = SessionRuntime(record, self._runtime_adapter, self._repository, self._history_limit)
             self._runtimes[record.id] = runtime
+        else:
+            runtime.record = record
         runtime.start()
         return runtime

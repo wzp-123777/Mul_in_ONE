@@ -36,7 +36,7 @@ class SessionRepository(ABC):
     """Abstract repository responsible for session persistence."""
 
     @abstractmethod
-    async def create(self, tenant_id: str, user_id: str) -> SessionRecord: ...
+    async def create(self, tenant_id: str, user_id: str, *, user_persona: str | None = None) -> SessionRecord: ...
 
     @abstractmethod
     async def get(self, session_id: str) -> Optional[SessionRecord]: ...
@@ -49,6 +49,9 @@ class SessionRepository(ABC):
 
     @abstractmethod
     async def list_messages(self, session_id: str, limit: int = 50) -> List[MessageRecord]: ...
+
+    @abstractmethod
+    async def update_user_persona(self, session_id: str, user_persona: str | None) -> SessionRecord: ...
 
 
 class BaseSQLAlchemyRepository:
@@ -95,10 +98,15 @@ class InMemorySessionRepository(SessionRepository):
         self._messages: Dict[str, Deque[MessageRecord]] = defaultdict(deque)
         self._lock = asyncio.Lock()
 
-    async def create(self, tenant_id: str, user_id: str) -> SessionRecord:
+    async def create(self, tenant_id: str, user_id: str, *, user_persona: str | None = None) -> SessionRecord:
         async with self._lock:
             session_id = f"sess_{tenant_id}_{uuid.uuid4().hex[:8]}"
-            record = SessionRecord(id=session_id, tenant_id=tenant_id, user_id=user_id)
+            record = SessionRecord(
+                id=session_id,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                user_persona=user_persona,
+            )
             self._records[session_id] = record
             return record
 
@@ -127,6 +135,14 @@ class InMemorySessionRepository(SessionRepository):
         async with self._lock:
             history = list(self._messages.get(session_id, ()))
             return history[-limit:]
+
+    async def update_user_persona(self, session_id: str, user_persona: str | None) -> SessionRecord:
+        async with self._lock:
+            record = self._records.get(session_id)
+            if record is None:
+                raise ValueError("Session not found")
+            record.user_persona = user_persona
+            return record
 
 
 class PersonaDataRepository(ABC):
@@ -220,7 +236,7 @@ class SQLAlchemySessionRepository(SessionRepository, BaseSQLAlchemyRepository):
     def __init__(self, session_factory: async_sessionmaker | None = None) -> None:
         BaseSQLAlchemyRepository.__init__(self, session_factory=session_factory)
 
-    async def create(self, tenant_id: str, user_id: str) -> SessionRecord:
+    async def create(self, tenant_id: str, user_id: str, *, user_persona: str | None = None) -> SessionRecord:
         async with self._session_scope() as db:
             tenant = await self._get_or_create_tenant(db, tenant_id)
             user = await self._get_or_create_user(db, tenant, user_id)
@@ -229,6 +245,7 @@ class SQLAlchemySessionRepository(SessionRepository, BaseSQLAlchemyRepository):
                 tenant_id=tenant.id,
                 user_id=user.id,
                 status="active",
+                user_persona=user_persona,
             )
             db.add(session_row)
             await db.flush()
@@ -306,6 +323,24 @@ class SQLAlchemySessionRepository(SessionRepository, BaseSQLAlchemyRepository):
             rows = list((await db.execute(stmt)).scalars())
             return [self._to_message_record(row) for row in reversed(rows)]
 
+    async def update_user_persona(self, session_id: str, user_persona: str | None) -> SessionRecord:
+        async with self._session_scope() as db:
+            stmt = (
+                select(SessionRow, TenantRow.name, UserRow.email)
+                .join(TenantRow, SessionRow.tenant_id == TenantRow.id)
+                .join(UserRow, SessionRow.user_id == UserRow.id)
+                .where(SessionRow.id == session_id)
+            )
+            result = await db.execute(stmt)
+            row = result.first()
+            if row is None:
+                raise ValueError("Session not found")
+            session_row, tenant_name, user_email = row
+            session_row.user_persona = user_persona
+            db.add(session_row)
+            await db.flush()
+            return self._to_session_record(session_row, tenant_name, user_email)
+
     @staticmethod
     def _generate_session_id(tenant_id: str) -> str:
         return f"sess_{tenant_id}_{uuid.uuid4().hex[:8]}"
@@ -335,6 +370,7 @@ class SQLAlchemySessionRepository(SessionRepository, BaseSQLAlchemyRepository):
             tenant_id=tenant_name,
             user_id=user_email,
             created_at=self._normalize_dt(row.created_at),
+            user_persona=row.user_persona,
         )
 
     def _to_message_record(self, row: SessionMessageRow) -> MessageRecord:

@@ -76,6 +76,7 @@ class Session(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     status: Mapped[str] = mapped_column(String(32), default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    user_persona: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     tenant: Mapped["Tenant"] = relationship("Tenant", back_populates="sessions")
     user: Mapped["User"] = relationship("User", back_populates="sessions")

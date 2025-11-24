@@ -6,6 +6,10 @@ import '@devui-design/icons/icomoon/devui-icon.css'
 import App from './App.vue'
 import router from './router'
 import MateChat from '@matechat/core'
+import { applyTheme } from './theme'
+
+// Apply theme before mounting
+applyTheme()
 
 const app = createApp(App)
 

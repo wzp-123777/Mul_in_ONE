@@ -7,12 +7,14 @@ import contextlib
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from dataclasses import replace
-from typing import AsyncIterator, Dict
+from typing import AsyncIterator, Dict, List
 
 from mul_in_one_nemo.api_config import apply_api_bindings
 from mul_in_one_nemo.config import Settings
+from mul_in_one_nemo.memory import ConversationMemory
 from mul_in_one_nemo.persona import Persona, PersonaSettings, load_personas
 from mul_in_one_nemo.runtime import MultiAgentRuntime
+from mul_in_one_nemo.scheduler import PersonaState, TurnScheduler
 from mul_in_one_nemo.service.models import SessionMessage, SessionRecord
 from mul_in_one_nemo.service.repositories import (
     PersonaDataRepository,
@@ -24,17 +26,22 @@ class RuntimeAdapter(ABC):
     """Adapter that bridges SessionService with runtime execution."""
 
     @abstractmethod
-    async def invoke_stream(self, session: SessionRecord, message: SessionMessage) -> AsyncIterator[str]: ...
+    async def invoke_stream(self, session: SessionRecord, message: SessionMessage) -> AsyncIterator[Dict]:
+        ...
 
 
 class StubRuntimeAdapter(RuntimeAdapter):
     """Simple runtime adapter used for tests and local development."""
 
-    async def invoke_stream(self, session: SessionRecord, message: SessionMessage) -> AsyncIterator[str]:
-        async def _generator() -> AsyncIterator[str]:
+    async def invoke_stream(self, session: SessionRecord, message: SessionMessage) -> AsyncIterator[Dict]:
+        async def _generator() -> AsyncIterator[Dict]:
             await asyncio.sleep(0)
-            prefix = message.sender or "user"
-            yield f"{prefix}:{message.content}"
+            target = (message.target_personas or ["assistant"])[0]
+            sender = target or "assistant"
+            content = f"{message.sender or 'user'}:{message.content}"
+            yield {"event": "agent.start", "data": {"sender": sender}}
+            yield {"event": "agent.chunk", "data": {"sender": sender, "content": content}}
+            yield {"event": "agent.end", "data": {"sender": sender, "content": content}}
 
         return _generator()
 
@@ -57,6 +64,21 @@ class NemoRuntimeAdapter(RuntimeAdapter):
         self._runtimes: Dict[str, MultiAgentRuntime] = {}
         self._persona_cache: Dict[str, PersonaSettings] = {}
         self._locks: Dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+
+    @staticmethod
+    def _build_scheduler(personas: list[Persona], max_agents: int) -> TurnScheduler:
+        states = [PersonaState(name=p.name, proactivity=p.proactivity) for p in personas]
+        return TurnScheduler(states, max_agents=max_agents)
+
+    @staticmethod
+    def _extract_tags(user_text: str, personas: list[Persona]) -> List[str]:
+        lowered = user_text.lower()
+        tags = []
+        for persona in personas:
+            handle = persona.handle.lower()
+            if persona.name.lower() in lowered or handle in lowered:
+                tags.append(persona.name)
+        return tags
 
     async def _ensure_runtime(self, tenant_id: str) -> MultiAgentRuntime:
         runtime = self._runtimes.get(tenant_id)
@@ -104,43 +126,90 @@ class NemoRuntimeAdapter(RuntimeAdapter):
         self._persona_cache.clear()
         self._locks.clear()
 
-    async def invoke_stream(self, session: SessionRecord, message: SessionMessage) -> AsyncIterator[str]:
+    async def invoke_stream(self, session: SessionRecord, message: SessionMessage) -> AsyncIterator[Dict]:
+        """Drives a multi-agent conversation turn, yielding structured events."""
         tenant_id = session.tenant_id or "default"
         runtime = await self._ensure_runtime(tenant_id)
-        persona_settings = self._persona_cache.get(tenant_id) or await self._load_persona_settings(tenant_id)
-        persona = self._select_persona(message, persona_settings.personas)
-        payload = {
-            "session_id": session.id,
-            "tenant_id": session.tenant_id,
-            "user_message": message.content,
-            "history": message.history or [],
-            "target_personas": message.target_personas or [],
-        }
+        persona_settings = self._persona_cache[tenant_id]
 
-        async def _generator() -> AsyncIterator[str]:
-            async for chunk in runtime.invoke_stream(persona.name, payload):
-                if isinstance(chunk, str):
-                    yield chunk
-                elif hasattr(chunk, "response"):
-                    yield getattr(chunk, "response")  # type: ignore[no-any-return]
-                else:
-                    yield str(chunk)
+        # 1. Initialize Memory for the entire turn
+        memory = ConversationMemory()
+        if message.history:
+            for entry in message.history:
+                memory.add(entry["sender"], entry["content"])
+        
+        # The user's new message is the starting point
+        user_message_content = message.content
+        memory.add(message.sender or "user", user_message_content)
 
-        return _generator()
+        scheduler = self._build_scheduler(
+            persona_settings.personas,
+            persona_settings.max_agents_per_turn or self._settings.max_agents_per_turn,
+        )
 
-    @staticmethod
-    def _select_persona(message: SessionMessage, personas: list[Persona]) -> Persona:
-        if not personas:
-            raise RuntimeError("No personas configured for runtime")
-
+        # 2. Set initial context for the turn
+        context_tags = self._extract_tags(user_message_content, persona_settings.personas)
         if message.target_personas:
-            mapping = {p.name.lower(): p for p in personas}
-            handle_map = {p.handle.lower(): p for p in personas}
+            valid_persona_names = {p.name for p in persona_settings.personas}
             for target in message.target_personas:
-                key = target.lower()
-                if key in mapping:
-                    return mapping[key]
-                if key in handle_map:
-                    return handle_map[key]
+                if target in valid_persona_names and target not in context_tags:
+                    context_tags.append(target)
 
-        return personas[0]
+        last_speaker = message.sender or "user"
+        is_first_round = True
+        max_exchanges = 5
+
+        # 3. Start the conversation loop
+        for exchange_round in range(max_exchanges):
+            speakers = scheduler.next_turn(
+                context_tags=context_tags if exchange_round == 0 else None,
+                last_speaker=last_speaker,
+                is_user_message=is_first_round,
+            )
+
+            if not speakers:
+                break
+
+            for persona_name in speakers:
+                yield {"event": "agent.start", "data": {"sender": persona_name}}
+
+                # Construct payload with appropriate context
+                if is_first_round:
+                    # The first agent(s) respond directly to the user's message
+                    payload = {
+                        "history": memory.as_payload(runtime.settings.memory_window, last_n=1),
+                        "user_message": user_message_content,
+                    }
+                else:
+                    # Subsequent agents respond to the previous speaker in a more contextual way
+                    # The full history is in memory, we frame the last message as an observation.
+                    last_message = memory.get_last_message()
+                    observed_message = f"你刚刚观察到 \"{last_speaker}\" 说: \"{last_message}\"。现在轮到你发言，你可以对此进行评论，或开启新话题。"
+                    payload = {
+                        "history": memory.as_payload(runtime.settings.memory_window, last_n=1),
+                        "user_message": observed_message,
+                    }
+
+                full_reply = ""
+                try:
+                    async for chunk in runtime.invoke_stream(persona_name, payload):
+                        text_chunk = ""
+                        if isinstance(chunk, str):
+                            text_chunk = chunk
+                        elif hasattr(chunk, "response"):
+                            text_chunk = getattr(chunk, "response")
+
+                        if text_chunk:
+                            yield {"event": "agent.chunk", "data": {"content": text_chunk}}
+                            full_reply += text_chunk
+                except Exception as e:
+                    error_message = f"[Error from {persona_name}: {e}]"
+                    yield {"event": "agent.chunk", "data": {"content": error_message}}
+                    full_reply = error_message
+                
+                is_first_round = False
+
+                yield {"event": "agent.end", "data": {"sender": persona_name, "content": full_reply}}
+                memory.add(persona_name, full_reply)
+                last_speaker = persona_name
+                context_tags.extend(self._extract_tags(full_reply, persona_settings.personas))
