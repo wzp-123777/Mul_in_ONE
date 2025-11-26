@@ -20,22 +20,52 @@ def create_app() -> FastAPI:
     os.makedirs(log_dir, exist_ok=True)
     log_file_path = os.path.join(log_dir, "backend.log")
 
-    logger = logging.getLogger()
-    logger.setLevel(logging.INFO)
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
 
     # Avoid duplicate handlers if uvicorn reloads
-    existing_file_handler = any(
-        isinstance(h, RotatingFileHandler) and getattr(h, "baseFilename", None) == log_file_path
-        for h in logger.handlers
+    file_handler: RotatingFileHandler | None = None
+    existing_file_handler = next(
+        (
+            h
+            for h in root_logger.handlers
+            if isinstance(h, RotatingFileHandler) and getattr(h, "baseFilename", None) == log_file_path
+        ),
+        None,
     )
-    if not existing_file_handler:
+    if existing_file_handler:
+        file_handler = existing_file_handler
+    else:
         file_handler = RotatingFileHandler(log_file_path, maxBytes=5 * 1024 * 1024, backupCount=3)
         formatter = logging.Formatter(
             fmt="%(asctime)s %(levelname)s [%(name)s] %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",
         )
         file_handler.setFormatter(formatter)
-        logger.addHandler(file_handler)
+        root_logger.addHandler(file_handler)
+
+    # Ensure important subsystems propagate to the shared handler
+    watched_loggers = (
+        "mul_in_one_nemo",
+        "mul_in_one_nemo.service",
+        "sqlalchemy.engine",
+        "sqlalchemy.pool",
+        "pymilvus",
+    )
+    for name in watched_loggers:
+        component_logger = logging.getLogger(name)
+        component_logger.setLevel(logging.INFO)
+        component_logger.propagate = True
+        # Remove console-only handlers added by dependencies to avoid stdout-only logs
+        for handler in list(component_logger.handlers):
+            if handler is not file_handler:
+                component_logger.removeHandler(handler)
+
+    # Capture uvicorn access logs as well
+    for uvicorn_logger_name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        uvicorn_logger = logging.getLogger(uvicorn_logger_name)
+        uvicorn_logger.propagate = True
+        uvicorn_logger.setLevel(logging.INFO)
 
     app.include_router(sessions.router, prefix="/api")
     app.include_router(personas.router, prefix="/api")

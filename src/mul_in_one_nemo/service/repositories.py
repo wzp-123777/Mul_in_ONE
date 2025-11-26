@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import logging
 import uuid
 from abc import ABC, abstractmethod
 from collections import defaultdict, deque
@@ -31,6 +32,9 @@ from mul_in_one_nemo.service.models import (
     PersonaRecord,
     SessionRecord,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 class SessionRepository(ABC):
@@ -73,6 +77,7 @@ class BaseSQLAlchemyRepository:
             yield session
             await session.commit()
         except Exception:
+            logger.exception("Database transaction failed; rolling back")
             await session.rollback()
             raise
         finally:
@@ -277,6 +282,12 @@ class SQLAlchemySessionRepository(SessionRepository, BaseSQLAlchemyRepository):
                      *, user_persona: str | None = None,
                      initial_persona_ids: List[int] = []) -> SessionRecord:
         async with self._session_scope() as db:
+            logger.info(
+                "Creating session (tenant=%s user=%s personas=%s)",
+                tenant_id,
+                user_id,
+                initial_persona_ids,
+            )
             tenant = await self._get_or_create_tenant(db, tenant_id)
             user = await self._get_or_create_user(db, tenant, user_id)
             
@@ -297,6 +308,7 @@ class SQLAlchemySessionRepository(SessionRepository, BaseSQLAlchemyRepository):
             )
             db.add(session_row)
             await db.flush()
+            logger.info("Session created: %s", session_row.id)
             return self._to_session_record(session_row, tenant.name, user.email, session_row.participants)
 
     async def get(self, session_id: str) -> Optional[SessionRecord]:
@@ -311,14 +323,14 @@ class SQLAlchemySessionRepository(SessionRepository, BaseSQLAlchemyRepository):
             result = await db.execute(stmt)
             row = result.first()
             if row is None:
+                logger.info("Session not found: %s", session_id)
                 return None
             session_row, tenant_name, user_email = row
             return self._to_session_record(session_row, tenant_name, user_email, session_row.participants)
 
     async def list_sessions(self, tenant_id: str, user_id: str) -> List[SessionRecord]:
-        print("\n[DEBUG] Entering list_sessions method.")
-        print(f"[DEBUG] tenant_id = {tenant_id}, user_id = {user_id}")
         async with self._session_scope() as db:
+            logger.info("Listing sessions for tenant=%s user=%s", tenant_id, user_id)
             try:
                 stmt = (
                     select(SessionRow, TenantRow.name, UserRow.email)
@@ -328,24 +340,15 @@ class SQLAlchemySessionRepository(SessionRepository, BaseSQLAlchemyRepository):
                     .order_by(SessionRow.created_at.desc())
                     .options(selectinload(SessionRow.participants))
                 )
-                print(f"[DEBUG] Executing SQLAlchemy statement...")
                 rows = await db.execute(stmt)
-                
                 results = rows.all()
-                print(f"[DEBUG] Query executed. Found {len(results)} rows.")
-
-                processed_records = []
-                for i, (session_row, tenant_name, user_email) in enumerate(results):
-                    print(f"[DEBUG] Processing row {i}: session_id={session_row.id}, tenant_name={tenant_name}, user_email={user_email}")
-                    record = self._to_session_record(session_row, tenant_name, user_email, session_row.participants)
-                    processed_records.append(record)
-                
-                print("[DEBUG] Finished processing all rows. Returning records.")
-                return processed_records
-            except Exception as e:
-                print(f"[DEBUG] An exception occurred inside list_sessions: {e}")
-                import traceback
-                traceback.print_exc()
+                logger.info("list_sessions returned %s rows", len(results))
+                return [
+                    self._to_session_record(session_row, tenant_name, user_email, session_row.participants)
+                    for session_row, tenant_name, user_email in results
+                ]
+            except Exception:
+                logger.exception("Failed to list sessions for tenant=%s user=%s", tenant_id, user_id)
                 raise
 
 
@@ -360,6 +363,12 @@ class SQLAlchemySessionRepository(SessionRepository, BaseSQLAlchemyRepository):
             )
             db.add(message_row)
             await db.flush()
+            logger.info(
+                "Message stored session=%s sender=%s message_id=%s",
+                session_id,
+                sender,
+                message_row.id,
+            )
             return self._to_message_record(message_row)
 
     async def list_messages(self, session_id: str, limit: int = 50) -> List[MessageRecord]:
@@ -371,6 +380,7 @@ class SQLAlchemySessionRepository(SessionRepository, BaseSQLAlchemyRepository):
                 .limit(limit)
             )
             rows = list((await db.execute(stmt)).scalars())
+            logger.info("Fetched %s messages for session=%s", len(rows), session_id)
             return [self._to_message_record(row) for row in reversed(rows)]
 
     async def update_user_persona(self, session_id: str, user_persona: str | None) -> SessionRecord:
@@ -389,6 +399,7 @@ class SQLAlchemySessionRepository(SessionRepository, BaseSQLAlchemyRepository):
             session_row.user_persona = user_persona
             db.add(session_row)
             await db.flush()
+            logger.info("Updated user_persona for session=%s", session_id)
             return self._to_session_record(session_row, tenant_name, user_email, session_row.participants)
 
     async def update_session_participants(self, session_id: str, persona_ids: List[int]) -> SessionRecord:
@@ -415,6 +426,11 @@ class SQLAlchemySessionRepository(SessionRepository, BaseSQLAlchemyRepository):
 
             participants: List[PersonaRow] = []
             if unique_ids:
+                logger.info(
+                    "Updating session participants session=%s personas=%s",
+                    session_id,
+                    unique_ids,
+                )
                 persona_stmt = (
                     select(PersonaRow)
                     .where(
@@ -431,6 +447,7 @@ class SQLAlchemySessionRepository(SessionRepository, BaseSQLAlchemyRepository):
             session_row.participants = participants
             db.add(session_row)
             await db.flush()
+            logger.info("Session participants updated session=%s count=%s", session_id, len(participants))
             return self._to_session_record(session_row, tenant_name, user_email, participants)
 
     @staticmethod
@@ -519,6 +536,7 @@ class SQLAlchemyPersonaRepository(PersonaDataRepository, BaseSQLAlchemyRepositor
         temperature: float | None = None,
     ) -> APIProfileRecord:
         async with self._session_scope() as db:
+            logger.info("Creating API profile '%s' for tenant=%s", name, tenant_id)
             tenant = await self._get_or_create_tenant(db, tenant_id)
             cipher = self._encrypt_api_key(api_key)
             profile = APIProfileRow(
@@ -531,10 +549,12 @@ class SQLAlchemyPersonaRepository(PersonaDataRepository, BaseSQLAlchemyRepositor
             )
             db.add(profile)
             await db.flush()
+            logger.info("API profile created id=%s tenant=%s", profile.id, tenant_id)
             return self._to_api_profile_record(profile, tenant.name, decrypted_key=api_key)
 
     async def list_api_profiles(self, tenant_id: str) -> List[APIProfileRecord]:
         async with self._session_scope() as db:
+            logger.info("Listing API profiles for tenant=%s", tenant_id)
             stmt = (
                 select(APIProfileRow, TenantRow.name)
                 .join(TenantRow, APIProfileRow.tenant_id == TenantRow.id)
@@ -549,6 +569,7 @@ class SQLAlchemyPersonaRepository(PersonaDataRepository, BaseSQLAlchemyRepositor
 
     async def get_api_profile(self, tenant_id: str, profile_id: int) -> APIProfileRecord | None:
         async with self._session_scope() as db:
+            logger.info("Fetching API profile id=%s tenant=%s", profile_id, tenant_id)
             stmt = (
                 select(APIProfileRow, TenantRow.name)
                 .join(TenantRow, APIProfileRow.tenant_id == TenantRow.id)
@@ -573,6 +594,7 @@ class SQLAlchemyPersonaRepository(PersonaDataRepository, BaseSQLAlchemyRepositor
         temperature: float | None = None,
     ) -> APIProfileRecord:
         async with self._session_scope() as db:
+            logger.info("Updating API profile id=%s tenant=%s", profile_id, tenant_id)
             tenant = await self._get_tenant(db, tenant_id)
             profile = await self._assert_profile_owned(db, tenant.id, profile_id)
             if name is not None:
@@ -588,10 +610,12 @@ class SQLAlchemyPersonaRepository(PersonaDataRepository, BaseSQLAlchemyRepositor
                 decrypted_key = api_key or None
                 profile.api_key_cipher = self._encrypt_api_key(api_key)
             await db.flush()
+            logger.info("API profile updated id=%s tenant=%s", profile.id, tenant_id)
             return self._to_api_profile_record(profile, tenant.name, decrypted_key=decrypted_key)
 
     async def delete_api_profile(self, tenant_id: str, profile_id: int) -> None:
         async with self._session_scope() as db:
+            logger.info("Deleting API profile id=%s tenant=%s", profile_id, tenant_id)
             tenant = await self._get_tenant(db, tenant_id)
             profile = await self._assert_profile_owned(db, tenant.id, profile_id)
             await db.execute(
@@ -616,6 +640,7 @@ class SQLAlchemyPersonaRepository(PersonaDataRepository, BaseSQLAlchemyRepositor
         background: str | None = None,
     ) -> PersonaRecord:
         async with self._session_scope() as db:
+            logger.info("Creating persona '%s' for tenant=%s", name, tenant_id)
             tenant = await self._get_or_create_tenant(db, tenant_id)
             profile = None
             if api_profile_id is not None:
@@ -642,10 +667,12 @@ class SQLAlchemyPersonaRepository(PersonaDataRepository, BaseSQLAlchemyRepositor
             )
             db.add(persona)
             await db.flush()
+            logger.info("Persona created id=%s tenant=%s", persona.id, tenant_id)
             return self._to_persona_record(persona, tenant.name, profile)
 
     async def list_personas(self, tenant_id: str) -> List[PersonaRecord]:
         async with self._session_scope() as db:
+            logger.info("Listing personas for tenant=%s", tenant_id)
             stmt = (
                 select(PersonaRow, TenantRow.name, APIProfileRow)
                 .join(TenantRow, PersonaRow.tenant_id == TenantRow.id)
@@ -661,6 +688,7 @@ class SQLAlchemyPersonaRepository(PersonaDataRepository, BaseSQLAlchemyRepositor
 
     async def get_persona(self, tenant_id: str, persona_id: int) -> PersonaRecord | None:
         async with self._session_scope() as db:
+            logger.info("Fetching persona id=%s tenant=%s", persona_id, tenant_id)
             stmt = (
                 select(PersonaRow, TenantRow.name, APIProfileRow)
                 .join(TenantRow, PersonaRow.tenant_id == TenantRow.id)
@@ -691,6 +719,7 @@ class SQLAlchemyPersonaRepository(PersonaDataRepository, BaseSQLAlchemyRepositor
         background: str | None = None,
     ) -> PersonaRecord:
         async with self._session_scope() as db:
+            logger.info("Updating persona id=%s tenant=%s", persona_id, tenant_id)
             tenant = await self._get_tenant(db, tenant_id)
             persona = await self._assert_persona_owned(db, tenant.id, persona_id)
             profile_row = None
@@ -727,18 +756,21 @@ class SQLAlchemyPersonaRepository(PersonaDataRepository, BaseSQLAlchemyRepositor
             if background is not None:
                 persona.background = background
             await db.flush()
+            logger.info("Persona updated id=%s tenant=%s", persona_id, tenant_id)
             if profile_row is None and persona.api_profile_id:
                 profile_row = await db.get(APIProfileRow, persona.api_profile_id)
             return self._to_persona_record(persona, tenant.name, profile_row)
 
     async def delete_persona(self, tenant_id: str, persona_id: int) -> None:
         async with self._session_scope() as db:
+            logger.info("Deleting persona id=%s tenant=%s", persona_id, tenant_id)
             tenant = await self._get_tenant(db, tenant_id)
             persona = await self._assert_persona_owned(db, tenant.id, persona_id)
             await db.delete(persona)
 
     async def load_persona_settings(self, tenant_id: str) -> PersonaSettings:
         async with self._session_scope() as db:
+            logger.info("Loading persona settings for tenant=%s", tenant_id)
             stmt = (
                 select(PersonaRow, APIProfileRow)
                 .join(TenantRow, PersonaRow.tenant_id == TenantRow.id)

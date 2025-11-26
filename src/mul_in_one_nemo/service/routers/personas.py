@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -13,6 +14,7 @@ from mul_in_one_nemo.service.rag_service import RAGService
 from mul_in_one_nemo.service.repositories import PersonaDataRepository
 
 router = APIRouter(tags=["personas"])
+logger = logging.getLogger(__name__)
 
 
 class APIProfileCreate(BaseModel):
@@ -140,6 +142,7 @@ async def list_api_profiles(
     tenant_id: str = Query(..., description="Tenant identifier"),
     repository: PersonaDataRepository = Depends(get_persona_repository),
 ) -> list[APIProfileResponse]:
+    logger.info("Listing API profiles for tenant '%s'", tenant_id)
     records = await repository.list_api_profiles(tenant_id)
     return [APIProfileResponse.from_record(record) for record in records]
 
@@ -150,6 +153,7 @@ async def get_api_profile(
     tenant_id: str = Query(..., description="Tenant identifier"),
     repository: PersonaDataRepository = Depends(get_persona_repository),
 ) -> APIProfileResponse:
+    logger.info("Fetching API profile id=%s for tenant '%s'", profile_id, tenant_id)
     record = await repository.get_api_profile(tenant_id, profile_id)
     if record is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API profile not found")
@@ -161,6 +165,7 @@ async def create_api_profile(
     payload: APIProfileCreate,
     repository: PersonaDataRepository = Depends(get_persona_repository),
 ) -> APIProfileResponse:
+    logger.info("Creating API profile '%s' for tenant '%s'", payload.name, payload.tenant_id)
     record = await repository.create_api_profile(
         tenant_id=payload.tenant_id,
         name=payload.name,
@@ -186,6 +191,12 @@ async def update_api_profile(
     if "base_url" in updates and updates["base_url"] is not None:
         updates["base_url"] = str(updates["base_url"])
     try:
+        logger.info(
+            "Updating API profile id=%s for tenant '%s' with fields=%s",
+            profile_id,
+            tenant_id,
+            list(updates.keys()),
+        )
         record = await repository.update_api_profile(tenant_id, profile_id, **updates)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
@@ -199,6 +210,7 @@ async def delete_api_profile(
     repository: PersonaDataRepository = Depends(get_persona_repository),
 ) -> Response:
     try:
+        logger.info("Deleting API profile id=%s for tenant '%s'", profile_id, tenant_id)
         await repository.delete_api_profile(tenant_id, profile_id)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
@@ -210,6 +222,7 @@ async def list_personas(
     tenant_id: str = Query(..., description="Tenant identifier"),
     repository: PersonaDataRepository = Depends(get_persona_repository),
 ) -> list[PersonaResponse]:
+    logger.info("Listing personas for tenant '%s'", tenant_id)
     records = await repository.list_personas(tenant_id)
     return [PersonaResponse.from_record(record) for record in records]
 
@@ -220,6 +233,7 @@ async def get_persona(
     tenant_id: str = Query(..., description="Tenant identifier"),
     repository: PersonaDataRepository = Depends(get_persona_repository),
 ) -> PersonaResponse:
+    logger.info("Fetching persona id=%s for tenant '%s'", persona_id, tenant_id)
     record = await repository.get_persona(tenant_id, persona_id)
     if record is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Persona not found")
@@ -233,6 +247,7 @@ async def create_persona(
     rag_service: RAGService = Depends(get_rag_service),
 ) -> PersonaResponse:
     try:
+        logger.info("Creating persona '%s' for tenant '%s'", payload.name, payload.tenant_id)
         record = await repository.create_persona(
             tenant_id=payload.tenant_id,
             name=payload.name,
@@ -250,15 +265,23 @@ async def create_persona(
         # 自动摄取 background 到 RAG
         if payload.background and payload.background.strip():
             try:
+                logger.info(
+                    "Auto-ingesting background for persona_id=%s (tenant=%s)",
+                    record.id,
+                    payload.tenant_id,
+                )
                 await rag_service.ingest_text(
                     text=payload.background,
                     persona_id=record.id,
                     source="background"
                 )
-            except Exception as e:
-                # 记录错误但不阻止 Persona 创建
-                import logging
-                logging.warning(f"Failed to auto-ingest background for persona {record.id}: {e}")
+                logger.info("Background ingestion completed for persona_id=%s", record.id)
+            except Exception as exc:  # pragma: no cover - best effort logging
+                logger.warning(
+                    "Failed to auto-ingest background for persona_id=%s: %s",
+                    record.id,
+                    exc,
+                )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return PersonaResponse.from_record(record)
@@ -276,6 +299,12 @@ async def update_persona(
     if not updates:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No fields provided")
     try:
+        logger.info(
+            "Updating persona id=%s for tenant '%s' with fields=%s",
+            persona_id,
+            tenant_id,
+            list(updates.keys()),
+        )
         record = await repository.update_persona(tenant_id, persona_id, **updates)
         
         # 如果更新了 background，重新摄取到 RAG
@@ -283,15 +312,20 @@ async def update_persona(
             background_text = updates["background"]
             if background_text.strip():
                 try:
+                    logger.info("Refreshing background documents for persona_id=%s", persona_id)
                     await rag_service.delete_documents_by_source(persona_id, source="background")
                     await rag_service.ingest_text(
                         text=background_text,
                         persona_id=persona_id,
                         source="background"
                     )
-                except Exception as e:
-                    import logging
-                    logging.warning(f"Failed to re-ingest background for persona {persona_id}: {e}")
+                    logger.info("Background re-ingestion completed for persona_id=%s", persona_id)
+                except Exception as exc:  # pragma: no cover - best effort logging
+                    logger.warning(
+                        "Failed to re-ingest background for persona_id=%s: %s",
+                        persona_id,
+                        exc,
+                    )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     return PersonaResponse.from_record(record)
@@ -304,6 +338,7 @@ async def delete_persona(
     repository: PersonaDataRepository = Depends(get_persona_repository),
 ) -> Response:
     try:
+        logger.info("Deleting persona id=%s for tenant '%s'", persona_id, tenant_id)
         await repository.delete_persona(tenant_id, persona_id)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
@@ -317,6 +352,7 @@ async def ingest_persona_data(
     rag_service: RAGService = Depends(get_rag_service),
 ) -> PersonaIngestResponse:
     try:
+        logger.info("Manual URL ingest for persona_id=%s url=%s", persona_id, payload.url)
         result = await rag_service.ingest_url(payload.url, persona_id)
         return PersonaIngestResponse(
             status=result["status"],
@@ -333,6 +369,7 @@ async def ingest_persona_text(
     rag_service: RAGService = Depends(get_rag_service),
 ) -> PersonaIngestResponse:
     try:
+        logger.info("Manual text ingest for persona_id=%s (chars=%s)", persona_id, len(payload.text))
         result = await rag_service.ingest_text(payload.text, persona_id)
         return PersonaIngestResponse(
             status=result["status"],
@@ -343,43 +380,48 @@ async def ingest_persona_text(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
 
 
-    @router.post("/personas/{persona_id}/refresh_rag", response_model=PersonaIngestResponse, status_code=status.HTTP_200_OK)
-    async def refresh_persona_rag(
-        persona_id: int,
-        tenant_id: str = Query(..., description="Tenant identifier"),
-        repository: PersonaDataRepository = Depends(get_persona_repository),
-        rag_service: RAGService = Depends(get_rag_service),
-    ) -> PersonaIngestResponse:
-        """刷新 Persona 的 RAG 资料库（从数据库中的 background 字段重新摄取）"""
-        try:
-            # 获取 Persona 信息
-            persona = await repository.get_persona(tenant_id, persona_id)
-            if persona is None:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Persona not found")
-        
-            if not persona.background or not persona.background.strip():
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST, 
-                    detail="Persona has no background content to ingest"
-                )
-        
-            # 删除旧的 background 资料
-            await rag_service.delete_documents_by_source(persona_id, source="background")
-        
-            # 重新摄取
-            result = await rag_service.ingest_text(
-                text=persona.background,
-                persona_id=persona_id,
-                source="background"
+
+@router.post("/personas/{persona_id}/refresh_rag", response_model=PersonaIngestResponse, status_code=status.HTTP_200_OK)
+async def refresh_persona_rag(
+    persona_id: int,
+    tenant_id: str = Query(..., description="Tenant identifier"),
+    repository: PersonaDataRepository = Depends(get_persona_repository),
+    rag_service: RAGService = Depends(get_rag_service),
+) -> PersonaIngestResponse:
+    """刷新 Persona 的 RAG 资料库（从数据库中的 background 字段重新摄取）"""
+    try:
+        logger.info("Refreshing RAG background for persona_id=%s tenant=%s", persona_id, tenant_id)
+        persona = await repository.get_persona(tenant_id, persona_id)
+        if persona is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Persona not found")
+
+        if not persona.background or not persona.background.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Persona has no background content to ingest"
             )
-        
-            return PersonaIngestResponse(
-                status=result["status"],
-                documents_added=result["documents_added"],
-                collection_name=result["collection_name"],
-            )
-        except HTTPException:
-            raise
-        except Exception as exc:
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+
+        await rag_service.delete_documents_by_source(persona_id, source="background")
+        result = await rag_service.ingest_text(
+            text=persona.background,
+            persona_id=persona_id,
+            source="background"
+        )
+
+        logger.info(
+            "Persona background refresh completed: persona_id=%s documents=%s",
+            persona_id,
+            result["documents_added"],
+        )
+
+        return PersonaIngestResponse(
+            status=result["status"],
+            documents_added=result["documents_added"],
+            collection_name=result["collection_name"],
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:  # pragma: no cover - surface failure to client
+        logger.exception("Failed to refresh persona background for id=%s", persona_id)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
 
