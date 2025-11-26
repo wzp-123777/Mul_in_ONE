@@ -34,7 +34,11 @@ class ConversationMemory:
         limit: 默认窗口条数。
         last_n: 若指定则只返回最后 N 条。
         """
-        effective_limit = last_n if last_n is not None else limit
+        # When limit <= 0, treat as unlimited (full history)
+        if last_n is not None:
+            effective_limit = last_n
+        else:
+            effective_limit = len(self._messages) if limit <= 0 else limit
         return [asdict(message) for message in self.recent(effective_limit)]
 
     def get_last_message(self) -> str:

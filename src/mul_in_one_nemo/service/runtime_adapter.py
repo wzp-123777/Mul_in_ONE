@@ -68,7 +68,8 @@ class NemoRuntimeAdapter(RuntimeAdapter):
     @staticmethod
     def _build_scheduler(personas: list[Persona], max_agents: int) -> TurnScheduler:
         states = [PersonaState(name=p.name, proactivity=p.proactivity) for p in personas]
-        return TurnScheduler(states, max_agents=max_agents)
+        effective_max = len(personas) if max_agents <= 0 else max_agents
+        return TurnScheduler(states, max_agents=effective_max)
 
     @staticmethod
     def _extract_tags(user_text: str, personas: list[Persona]) -> List[str]:
@@ -151,7 +152,7 @@ class NemoRuntimeAdapter(RuntimeAdapter):
 
         scheduler = self._build_scheduler(
             persona_settings.personas,
-            persona_settings.max_agents_per_turn or self._settings.max_agents_per_turn,
+            (persona_settings.max_agents_per_turn or self._settings.max_agents_per_turn),
         )
 
         # 2. Set initial context for the turn

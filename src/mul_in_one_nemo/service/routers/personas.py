@@ -63,8 +63,8 @@ class PersonaCreate(BaseModel):
     handle: str | None = Field(default=None, max_length=128)
     tone: str = Field(default="neutral", max_length=64)
     proactivity: float = Field(default=0.5, ge=0.0, le=1.0)
-    memory_window: int = Field(default=8, ge=1, le=200)
-    max_agents_per_turn: int = Field(default=2, ge=1, le=8)
+    memory_window: int = Field(default=8, ge=-1, le=200, description="会话记忆窗口；-1 表示不限制（全量历史）")
+    max_agents_per_turn: int = Field(default=2, ge=-1, le=8, description="每轮最多发言的 Persona 数；-1 表示不限制（等于参与 Persona 数)")
     api_profile_id: int | None = Field(default=None, ge=1)
     is_default: bool = False
     background: str | None = Field(default=None, description="Background story or biography for RAG")
@@ -116,8 +116,8 @@ class PersonaUpdate(BaseModel):
     handle: str | None = Field(default=None, max_length=128)
     tone: str | None = Field(default=None, max_length=64)
     proactivity: float | None = Field(default=None, ge=0.0, le=1.0)
-    memory_window: int | None = Field(default=None, ge=1, le=200)
-    max_agents_per_turn: int | None = Field(default=None, ge=1, le=8)
+    memory_window: int | None = Field(default=None, ge=-1, le=200, description="-1 表示不限制")
+    max_agents_per_turn: int | None = Field(default=None, ge=-1, le=8, description="-1 表示不限制")
     api_profile_id: int | None = Field(default=None, ge=1)
     is_default: bool | None = None
     background: str | None = Field(default=None, description="Background story or biography for RAG")

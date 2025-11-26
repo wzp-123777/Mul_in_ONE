@@ -113,6 +113,7 @@ class InMemorySessionRepository(SessionRepository):
                 id=session_id,
                 tenant_id=tenant_id,
                 user_id=user_id,
+                created_at=datetime.now(timezone.utc),
                 user_persona=user_persona,
             )
             self._records[session_id] = record
