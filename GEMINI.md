@@ -55,7 +55,7 @@ The project is organized into several key directories:
 
 1.  **Start the PostgreSQL database:**
     ```bash
-    ./scripts/db_start.sh
+    ./scripts/db_control.sh start
     ```
 2.  **Run database migrations:**
     ```bash

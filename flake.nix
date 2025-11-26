@@ -21,6 +21,9 @@
             pkgs.git
             pkgs.nodejs_22
             pkgs.postgresql_16
+            pkgs.docker
+            pkgs.docker-compose
+            (if pkgs.stdenv.isDarwin then pkgs.colima else null)
             pkgs.zsh
           ];
 

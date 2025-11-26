@@ -80,6 +80,7 @@ class Persona(Base):
     name: Mapped[str] = mapped_column(String(128))
     handle: Mapped[str] = mapped_column(String(128))
     prompt: Mapped[str] = mapped_column(Text)
+    background: Mapped[str | None] = mapped_column(Text, nullable=True)
     tone: Mapped[str] = mapped_column(String(64), default="neutral")
     proactivity: Mapped[float] = mapped_column(default=0.5)
     memory_window: Mapped[int] = mapped_column(default=8)

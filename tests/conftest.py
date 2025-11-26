@@ -17,6 +17,10 @@ from pathlib import Path
 
 import pytest
 
+# Ensure pytest-asyncio plugin is loaded explicitly (workaround for environments
+# where entry-point auto loading may fail). Registers the asyncio marker.
+pytest_plugins = ["pytest_asyncio"]
+
 _DEFAULT_TIMEOUT_SECONDS = float(os.getenv("PYTEST_TEST_TIMEOUT", "30"))
 _LOGGER = logging.getLogger("tests.timeout")
 

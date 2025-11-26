@@ -216,6 +216,7 @@ class PersonaDataRepository(ABC):
         max_agents_per_turn: int,
         api_profile_id: int | None,
         is_default: bool,
+        background: str | None = None,
     ) -> PersonaRecord:
         ...
 
@@ -237,6 +238,7 @@ class PersonaDataRepository(ABC):
         max_agents_per_turn: int | None = None,
         api_profile_id: int | None = None,
         is_default: bool | None = None,
+        background: str | None = None,
     ) -> PersonaRecord:
         ...
 
@@ -596,6 +598,7 @@ class SQLAlchemyPersonaRepository(PersonaDataRepository, BaseSQLAlchemyRepositor
         max_agents_per_turn: int,
         api_profile_id: int | None,
         is_default: bool,
+        background: str | None = None,
     ) -> PersonaRecord:
         async with self._session_scope() as db:
             tenant = await self._get_or_create_tenant(db, tenant_id)
@@ -620,6 +623,7 @@ class SQLAlchemyPersonaRepository(PersonaDataRepository, BaseSQLAlchemyRepositor
                 max_agents_per_turn=max_agents_per_turn,
                 api_profile_id=profile.id if profile else None,
                 is_default=is_default,
+                background=background,
             )
             db.add(persona)
             await db.flush()
@@ -669,6 +673,7 @@ class SQLAlchemyPersonaRepository(PersonaDataRepository, BaseSQLAlchemyRepositor
         max_agents_per_turn: int | None = None,
         api_profile_id: int | None = None,
         is_default: bool | None = None,
+        background: str | None = None,
     ) -> PersonaRecord:
         async with self._session_scope() as db:
             tenant = await self._get_tenant(db, tenant_id)
@@ -704,6 +709,8 @@ class SQLAlchemyPersonaRepository(PersonaDataRepository, BaseSQLAlchemyRepositor
                         .values(is_default=False)
                     )
                 persona.is_default = is_default
+            if background is not None:
+                persona.background = background
             await db.flush()
             if profile_row is None and persona.api_profile_id:
                 profile_row = await db.get(APIProfileRow, persona.api_profile_id)
@@ -736,6 +743,7 @@ class SQLAlchemyPersonaRepository(PersonaDataRepository, BaseSQLAlchemyRepositor
                 prompt=persona_row.prompt,
                 tone=persona_row.tone,
                 proactivity=persona_row.proactivity,
+                id=persona_row.id, # Add this line
             )
             if api_row:
                 persona.api = PersonaAPIConfig(
@@ -825,6 +833,7 @@ class SQLAlchemyPersonaRepository(PersonaDataRepository, BaseSQLAlchemyRepositor
             memory_window=row.memory_window,
             max_agents_per_turn=row.max_agents_per_turn,
             is_default=row.is_default,
+            background=row.background,
             api_profile_id=profile.id if profile else None,
             api_profile_name=profile.name if profile else None,
             api_model=profile.model if profile else None,

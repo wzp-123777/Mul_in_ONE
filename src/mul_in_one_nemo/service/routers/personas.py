@@ -67,6 +67,7 @@ class PersonaCreate(BaseModel):
     max_agents_per_turn: int = Field(default=2, ge=1, le=8)
     api_profile_id: int | None = Field(default=None, ge=1)
     is_default: bool = False
+    background: str | None = Field(default=None, description="Background story or biography for RAG")
 
 
 class PersonaResponse(BaseModel):
@@ -80,6 +81,7 @@ class PersonaResponse(BaseModel):
     memory_window: int
     max_agents_per_turn: int
     is_default: bool
+    background: str | None = None
     api_profile_id: int | None = None
     api_profile_name: str | None = None
     api_model: str | None = None
@@ -99,6 +101,7 @@ class PersonaResponse(BaseModel):
             memory_window=record.memory_window,
             max_agents_per_turn=record.max_agents_per_turn,
             is_default=record.is_default,
+            background=record.background,
             api_profile_id=record.api_profile_id,
             api_profile_name=record.api_profile_name,
             api_model=record.api_model,
@@ -117,10 +120,14 @@ class PersonaUpdate(BaseModel):
     max_agents_per_turn: int | None = Field(default=None, ge=1, le=8)
     api_profile_id: int | None = Field(default=None, ge=1)
     is_default: bool | None = None
+    background: str | None = Field(default=None, description="Background story or biography for RAG")
 
 
 class PersonaIngestRequest(BaseModel):
     url: AnyHttpUrl = Field(..., description="URL to ingest content from for RAG")
+
+class PersonaTextIngestRequest(BaseModel):
+    text: str = Field(..., description="Raw text to ingest for RAG")
 
 class PersonaIngestResponse(BaseModel):
     status: str = Field(..., description="Status of the ingestion process")
@@ -233,6 +240,7 @@ async def create_persona(
             max_agents_per_turn=payload.max_agents_per_turn,
             api_profile_id=payload.api_profile_id,
             is_default=payload.is_default,
+            background=payload.background,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -277,6 +285,22 @@ async def ingest_persona_data(
 ) -> PersonaIngestResponse:
     try:
         result = await rag_service.ingest_url(payload.url, persona_id)
+        return PersonaIngestResponse(
+            status=result["status"],
+            documents_added=result["documents_added"],
+            collection_name=result["collection_name"],
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+
+@router.post("/personas/{persona_id}/ingest_text", response_model=PersonaIngestResponse, status_code=status.HTTP_200_OK)
+async def ingest_persona_text(
+    persona_id: int,
+    payload: PersonaTextIngestRequest,
+    rag_service: RAGService = Depends(get_rag_service),
+) -> PersonaIngestResponse:
+    try:
+        result = await rag_service.ingest_text(payload.text, persona_id)
         return PersonaIngestResponse(
             status=result["status"],
             documents_added=result["documents_added"],

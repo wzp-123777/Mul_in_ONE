@@ -55,6 +55,7 @@
               emit-value 
               map-options 
             />
+              <q-input v-model="newPersona.background" type="textarea" autogrow label="Background / Biography (任意长度)" />
             <q-input v-model="newPersona.prompt" type="textarea" label="System Prompt" :rules="[val => !!val || 'Field is required']" />
             <q-checkbox v-model="newPersona.is_default" label="Set as Default" />
             
@@ -91,6 +92,7 @@
               map-options 
               clearable
             />
+              <q-input v-model="editPersona.background" type="textarea" autogrow label="Background / Biography (任意长度)" />
             <q-input v-model="editPersona.prompt" type="textarea" label="System Prompt" :rules="[val => !!val || 'Field is required']" />
             <q-checkbox v-model="editPersona.is_default" label="Set as Default" />
 
@@ -139,6 +141,7 @@ const newPersona = reactive({
   name: '',
   handle: '',
   prompt: '',
+  background: '',
   tone: 'neutral',
   proactivity: 0.5,
   memory_window: 8,
@@ -152,6 +155,7 @@ const editPersona = reactive({
   name: '',
   handle: '',
   prompt: '',
+  background: '',
   tone: 'neutral',
   proactivity: 0.5,
   memory_window: 8,
@@ -196,6 +200,7 @@ const openEditDialog = (persona: Persona) => {
   editPersona.name = persona.name
   editPersona.handle = persona.handle
   editPersona.prompt = persona.prompt
+  editPersona.background = (persona as any).background || ''
   editPersona.tone = persona.tone
   editPersona.proactivity = persona.proactivity
   editPersona.memory_window = persona.memory_window
@@ -218,6 +223,7 @@ const handleCreate = async () => {
       name: newPersona.name,
       handle: newPersona.handle,
       prompt: newPersona.prompt,
+      background: newPersona.background || undefined,
       tone: newPersona.tone,
       proactivity: newPersona.proactivity,
       memory_window: newPersona.memory_window,
@@ -244,6 +250,7 @@ const handleUpdate = async () => {
       name: editPersona.name,
       handle: editPersona.handle,
       prompt: editPersona.prompt,
+      background: editPersona.background || undefined,
       tone: editPersona.tone,
       proactivity: editPersona.proactivity,
       memory_window: editPersona.memory_window,

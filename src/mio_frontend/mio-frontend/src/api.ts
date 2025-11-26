@@ -123,6 +123,7 @@ export interface Persona {
   name: string;
   handle: string;
   prompt: string;
+  background?: string;
   tone: string;
   proactivity: number;
   memory_window: number;
@@ -139,6 +140,7 @@ export interface CreatePersonaPayload {
   tenant_id: string;
   name: string;
   prompt: string;
+  background?: string;
   handle?: string;
   tone?: string;
   proactivity?: number;
@@ -152,6 +154,7 @@ export interface UpdatePersonaPayload {
   tenant_id: string;
   name?: string;
   prompt?: string;
+  background?: string | null;
   handle?: string;
   tone?: string;
   proactivity?: number;

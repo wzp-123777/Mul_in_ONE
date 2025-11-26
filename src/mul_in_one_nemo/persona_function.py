@@ -12,11 +12,15 @@ from nat.cli.register_workflow import register_function
 from nat.data_models.component_ref import LLMRef
 from nat.data_models.function import FunctionBaseConfig
 
+# RAG service singleton accessor
+from mul_in_one_nemo.service.rag_dependencies import get_rag_service
+
 
 class PersonaDialogueInput(BaseModel):
     """Input schema for persona dialogue function."""
     history: List[Dict[str, Any]] = Field(default_factory=list, description="Conversation history")
     user_message: str = Field(default="", description="Latest user message")
+    persona_id: Optional[int] = Field(default=None, description="Persona ID used for RAG retrieval context")
 
 
 class PersonaDialogueOutput(BaseModel):
@@ -36,9 +40,10 @@ class PersonaDialogueFunctionConfig(FunctionBaseConfig, name="mul_in_one_persona
 async def persona_dialogue_function(config: PersonaDialogueFunctionConfig, builder: Builder):
     llm = await builder.get_llm(config.llm_name, wrapper_type=LLMFrameworkEnum.LANGCHAIN)
 
-    def _build_prompts(input_data: PersonaDialogueInput) -> List[HumanMessage | SystemMessage]:
+    async def _build_prompts(input_data: PersonaDialogueInput) -> List[HumanMessage | SystemMessage]:
         history = input_data.history
         user_message = input_data.user_message
+        persona_id = input_data.persona_id
 
         system_prompt = f"""你是{config.persona_name}。{config.persona_prompt}
 
@@ -77,6 +82,23 @@ async def persona_dialogue_function(config: PersonaDialogueFunctionConfig, build
 
         prompts: List[HumanMessage | SystemMessage] = [SystemMessage(content=system_prompt)]
 
+        # RAG: 检索上下文并作为系统提示追加
+        if user_message and persona_id is not None:
+            try:
+                rag_service = get_rag_service()
+                docs = await rag_service.retrieve_documents(user_message, persona_id, top_k=4)
+                if docs:
+                    context_text = "\n\n".join(d.page_content for d in docs)
+                    rag_note = (
+                        "【检索到的相关资料】\n"
+                        f"{context_text}\n"
+                        "请优先基于以上资料回答；若无帮助可忽略此段。"
+                    )
+                    prompts.append(SystemMessage(content=rag_note))
+            except Exception as e:
+                # 忽略检索失败，继续正常对话
+                prompts.append(SystemMessage(content=f"[RAG检索暂不可用: {e}]"))
+
         if config.instructions:
             prompts.append(SystemMessage(content=f"额外指示：{config.instructions}"))
 
@@ -107,12 +129,12 @@ async def persona_dialogue_function(config: PersonaDialogueFunctionConfig, build
         return str(message)
 
     async def _respond_single(input_data: PersonaDialogueInput) -> PersonaDialogueOutput:
-        prompts = _build_prompts(input_data)
+        prompts = await _build_prompts(input_data)
         response = await llm.ainvoke(prompts)
         return PersonaDialogueOutput(response=_extract_text(response))
 
     async def _respond_stream(input_data: PersonaDialogueInput) -> AsyncGenerator[PersonaDialogueOutput, None]:
-        prompts = _build_prompts(input_data)
+        prompts = await _build_prompts(input_data)
 
         async for chunk in llm.astream(prompts):
             text = _extract_text(chunk)

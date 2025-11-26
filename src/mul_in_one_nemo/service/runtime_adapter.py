@@ -132,6 +132,9 @@ class NemoRuntimeAdapter(RuntimeAdapter):
         runtime = await self._ensure_runtime(tenant_id)
         persona_settings = self._persona_cache[tenant_id]
 
+        # Create a mapping from persona name to persona object for easy lookup
+        persona_map = {p.name: p for p in persona_settings.personas}
+
         # 1. Initialize Memory for the entire turn
         memory = ConversationMemory()
         if message.history:
@@ -177,21 +180,27 @@ class NemoRuntimeAdapter(RuntimeAdapter):
             for persona_name in speakers:
                 yield {"event": "agent.start", "data": {"sender": persona_name}}
 
+                # Get persona_id for the current speaker
+                current_persona = persona_map.get(persona_name)
+                persona_id = current_persona.id if current_persona else None
+
                 # Construct payload with appropriate context
                 if is_first_round:
                     # The first agent(s) respond directly to the user's message
                     payload = {
                         "history": memory.as_payload(runtime.settings.memory_window, last_n=1),
                         "user_message": user_message_content,
+                        "persona_id": persona_id, # Inject persona_id
                     }
                 else:
                     # Subsequent agents respond to the previous speaker in a more contextual way
-                    # The full history is in memory, we frame the last message as an observation.
+                    # The full history is in memory, we frame the last message as an an observation.
                     last_message = memory.get_last_message()
                     observed_message = f"你刚刚观察到 \"{last_speaker}\" 说: \"{last_message}\"。现在轮到你发言，你可以对此进行评论，或开启新话题。"
                     payload = {
                         "history": memory.as_payload(runtime.settings.memory_window, last_n=1),
                         "user_message": observed_message,
+                        "persona_id": persona_id, # Inject persona_id
                     }
 
                 full_reply = ""

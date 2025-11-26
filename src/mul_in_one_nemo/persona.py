@@ -17,6 +17,7 @@ class Persona:
     catchphrases: List[str] | None = None
     api: "PersonaAPIConfig" | None = None
     api_binding: str | None = None
+    id: int | None = None # Add this line
 
     def system_prompt(self) -> str:
         tagline = f"语气倾向：{self.tone}" if self.tone else ""
