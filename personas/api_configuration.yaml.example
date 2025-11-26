@@ -1,3 +1,16 @@
+# API 配置文件示例
+# 
+# 注意：此文件用于原型开发和本地测试。
+# 生产环境强烈建议使用数据库配置：
+# - 通过 Web UI 的 "API Profiles" 页面创建
+# - 或使用 POST /api/api-profiles API
+# 
+# 数据库模式优势：
+# - API Key 加密存储
+# - 运行时动态更新
+# - 按 Persona 灵活绑定
+# - 支持多租户
+
 apis:
   - name: Qwen32B
     base_url: https://api.example.com/v1

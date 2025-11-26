@@ -227,6 +227,7 @@ async def get_persona(
 async def create_persona(
     payload: PersonaCreate,
     repository: PersonaDataRepository = Depends(get_persona_repository),
+    rag_service: RAGService = Depends(get_rag_service),
 ) -> PersonaResponse:
     try:
         record = await repository.create_persona(
@@ -242,6 +243,19 @@ async def create_persona(
             is_default=payload.is_default,
             background=payload.background,
         )
+        
+        # 自动摄取 background 到 RAG
+        if payload.background and payload.background.strip():
+            try:
+                await rag_service.ingest_text(
+                    text=payload.background,
+                    persona_id=record.id,
+                    source="background"
+                )
+            except Exception as e:
+                # 记录错误但不阻止 Persona 创建
+                import logging
+                logging.warning(f"Failed to auto-ingest background for persona {record.id}: {e}")
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return PersonaResponse.from_record(record)
@@ -253,12 +267,28 @@ async def update_persona(
     payload: PersonaUpdate,
     tenant_id: str = Query(..., description="Tenant identifier"),
     repository: PersonaDataRepository = Depends(get_persona_repository),
+    rag_service: RAGService = Depends(get_rag_service),
 ) -> PersonaResponse:
     updates = payload.model_dump(exclude_unset=True)
     if not updates:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No fields provided")
     try:
         record = await repository.update_persona(tenant_id, persona_id, **updates)
+        
+        # 如果更新了 background，重新摄取到 RAG
+        if "background" in updates and updates["background"]:
+            background_text = updates["background"]
+            if background_text.strip():
+                try:
+                    await rag_service.delete_documents_by_source(persona_id, source="background")
+                    await rag_service.ingest_text(
+                        text=background_text,
+                        persona_id=persona_id,
+                        source="background"
+                    )
+                except Exception as e:
+                    import logging
+                    logging.warning(f"Failed to re-ingest background for persona {persona_id}: {e}")
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     return PersonaResponse.from_record(record)

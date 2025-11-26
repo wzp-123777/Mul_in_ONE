@@ -13,12 +13,14 @@ Mul-in-One 是一个基于 NVIDIA NeMo Agent Toolkit 构建的多智能体对话
 - **ORM**: SQLAlchemy (异步)
 - **数据库迁移**: Alembic
 - **对话引擎**: NVIDIA NeMo Agent Toolkit
+- **RAG 集成**: LangChain, OpenAIEmbeddings, OpenAI
+- **向量数据库**: Milvus
 - **包管理**: uv
 
 ### 前端技术栈
 - **框架**: Vue.js 3
 - **构建工具**: Vite
-- **UI组件库**: DevUI, Quasar
+- **UI组件库**: Quasar
 - **状态管理**: Vue Composition API
 - **包管理**: npm
 
@@ -34,6 +36,7 @@ graph TD
     B --> C[后端服务]
     C --> D[数据库]
     C --> E[NVIDIA NeMo Agent Toolkit]
+    C --> M[Milvus 向量数据库]
     E --> F[LLM API]
     
     subgraph 前端
@@ -51,6 +54,7 @@ graph TD
     
     subgraph 数据存储
         D
+        M
     end
 ```
 
@@ -118,6 +122,17 @@ graph TD
 13. **CLI模块** ([src/mul_in_one_nemo/cli.py](src/mul_in_one_nemo/cli.py:36))
     - 命令行接口实现
     - 交互式对话驱动
+
+14. **RAG服务模块** ([src/mul_in_one_nemo/service/rag_service.py](src/mul_in_one_nemo/service/rag_service.py:1))
+    - 知识库摄取（URL/文本）
+    - Milvus 向量存储集成
+    - 文档检索与上下文注入
+    - LangChain 集成（Embeddings, LLM）
+    - 数据库配置动态解析
+
+15. **RAG依赖模块** ([src/mul_in_one_nemo/service/rag_dependencies.py](src/mul_in_one_nemo/service/rag_dependencies.py:1))
+    - 轻量级单例访问器
+    - 避免循环依赖
 
 ### 后端数据流动逻辑
 
@@ -246,18 +261,26 @@ graph LR
    - AI Agent 的人格定义
    - 包含名称、提示词、语调等属性
    - 可绑定不同的 LLM API 配置
+   - 支持背景经历字段（自动摄取到 RAG 知识库，通过向量检索增强对话）
 
 4. **API Profile (API配置)**:
    - LLM API 连接配置
    - 包含基础URL、模型名称、API密钥等
+   - 运行时动态解析为 Persona 提供配置
 
 5. **Session (会话)**:
    - 用户与 Agent 的对话会话
    - 包含会话历史和参与者信息
+   - 支持无限历史窗口（memory_window = -1）
 
 6. **SessionMessage (会话消息)**:
    - 会话中的具体消息
    - 包含发送者、内容等信息
+
+7. **RAG 知识库**:
+   - 按 Persona 分集存储在 Milvus 中
+   - 支持 URL 抓取和直接文本摄取
+   - 向量检索增强对话上下文
 
 ### 核心工作流程
 
@@ -309,6 +332,55 @@ sequenceDiagram
 4. Persona 可以绑定到特定的 API Profile
 5. 运行时根据绑定关系使用相应的 API 配置
 
+#### 4. RAG 知识库管理流程
+
+```mermaid
+sequenceDiagram
+    participant U as 用户
+    participant F as 前端
+    participant B as 后端
+    participant R as RAGService
+    participant M as Milvus
+    participant L as LLM
+    
+    U->>F: 提交知识内容（URL/文本）
+    F->>B: POST /personas/{id}/ingest
+    B->>R: 调用 ingest_url/ingest_text
+    R->>R: 抓取/解析文本
+    R->>R: 文本切片 (RecursiveCharacterTextSplitter)
+    R->>L: 调用 Embeddings API 生成向量
+    L->>R: 返回向量
+    R->>M: 存储到 persona_{id}_collection
+    M->>R: 确认存储成功
+    R->>B: 返回摄取结果
+    B->>F: 返回状态与文档数
+    F->>U: 显示摄取成功
+```
+
+**知识检索与注入流程**:
+
+```mermaid
+sequenceDiagram
+    participant U as 用户
+    participant B as 后端
+    participant P as PersonaFunction
+    participant R as RAGService
+    participant M as Milvus
+    participant L as LLM
+    
+    U->>B: 发送对话消息
+    B->>P: 调用 _build_prompts (async)
+    P->>R: retrieve_documents(query, persona_id)
+    R->>M: 向量相似度检索
+    M->>R: 返回 Top-K 文档
+    R->>P: 格式化文档为上下文
+    P->>P: 注入系统提示 + 检索上下文
+    P->>L: 调用 LLM 生成
+    L->>P: 流式返回响应
+    P->>B: 返回生成结果
+    B->>U: WebSocket 推送
+```
+
 ### 调度机制
 
 1. **主动性计算**:
@@ -354,6 +426,11 @@ sequenceDiagram
    - PostgreSQL 数据库
    - 定期备份策略
 
+4. **向量数据库**:
+   - Milvus 实例（推荐 Docker 部署）
+   - 持久化存储配置
+   - 集合备份与恢复策略
+
 ## 安全考虑
 
 1. **API密钥加密**:
@@ -384,4 +461,12 @@ sequenceDiagram
 
 ## 总结
 
-Mul-in-One 项目通过结合 FastAPI 的高性能后端和 Vue.js 的现代化前端，构建了一个功能完整的多智能体对话系统。系统充分利用了 NVIDIA NeMo Agent Toolkit 的强大能力，实现了自然流畅的多 Agent 对话体验。通过清晰的架构设计和模块化实现，系统具有良好的可维护性和扩展性。
+Mul-in-One 项目通过结合 FastAPI 的高性能后端和 Vue.js 的现代化前端，构建了一个功能完整的多智能体对话系统。系统充分利用了 NVIDIA NeMo Agent Toolkit 的强大能力，实现了自然流畅的多 Agent 对话体验。
+
+**核心成就**:
+- ✅ **完整的 RAG 集成**: 通过 Milvus 向量数据库和 LangChain，实现了知识库摄取、检索和生成全链路
+- ✅ **数据库驱动配置**: 运行时动态解析 Persona 的 API 配置，支持多租户 SaaS 架构
+- ✅ **灵活的会话语义**: 支持无限历史窗口和回合限制，适应不同对话场景
+- ✅ **模块化架构**: 清晰的分层设计便于维护和扩展
+
+通过清晰的架构设计和模块化实现，系统具有良好的可维护性和扩展性，为后续的检索质量优化、多模态支持和企业级功能提供了坚实基础。

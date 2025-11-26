@@ -66,4 +66,16 @@ def get_persona_repository() -> PersonaDataRepository:
 @lru_cache
 def get_rag_service() -> RAGService:
     """Provide a singleton instance of the RAGService."""
-    return RAGService()
+    repo = get_persona_repository()
+
+    async def api_config_resolver(persona_id: int | None) -> dict:
+        if persona_id is None:
+            raise ValueError("Persona ID required for API configuration resolution")
+        
+        config = await repo.get_persona_api_config(persona_id)
+        if config is None:
+            raise ValueError(f"No API configuration found for persona {persona_id}")
+        return config
+
+    return RAGService(api_config_resolver=api_config_resolver)
+

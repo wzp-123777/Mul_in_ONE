@@ -14,6 +14,8 @@ from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from pydantic import AnyHttpUrl
 
+from pymilvus import Collection, connections
+
 # A temporary copy of web_utils from NeMo-Agent-Toolkit/scripts
 # This should be refactored into a common utility module.
 # --- Start of web_utils copy ---
@@ -75,6 +77,9 @@ class RAGService:
         self,
         config_path: Path = CONFIG_PATH,
         api_config_resolver: Optional[Callable[[Optional[int]], dict]] = None,
+        chunk_size: int = 500,
+        chunk_overlap: int = 50,
+        default_top_k: int = 4,
     ):
         """RAG service.
 
@@ -84,10 +89,14 @@ class RAGService:
         """
         self.config = self._load_config(config_path) if api_config_resolver is None else None
         self._api_config_resolver = api_config_resolver
+        self.chunk_size = chunk_size
+        self.chunk_overlap = chunk_overlap
+        self.default_top_k = default_top_k
         # In prototype mode, cache embedder/llm; in production, create per request
         if self.config is not None:
-            self.embedder = self._create_embedder()
-            self.llm = self._create_llm()
+            # YAML mode is synchronous initialization
+            self.embedder = self._create_embedder_sync()
+            self.llm = self._create_llm_sync()
         else:
             self.embedder = None
             self.llm = None
@@ -98,12 +107,15 @@ class RAGService:
         with open(config_path, "r") as f:
             return yaml.safe_load(f)
 
-    def _resolve_api_config(self, persona_id: Optional[int] = None) -> dict:
+    async def _resolve_api_config(self, persona_id: Optional[int] = None) -> dict:
         if self._api_config_resolver is not None:
-            cfg = self._api_config_resolver(persona_id)
+            cfg = await self._api_config_resolver(persona_id)
             if not isinstance(cfg, dict):
                 raise ValueError("api_config_resolver must return a dict")
             return cfg
+        return self._resolve_api_config_sync(persona_id)
+
+    def _resolve_api_config_sync(self, persona_id: Optional[int] = None) -> dict:
         # YAML prototype fallback
         assert self.config is not None
         default_api_name = self.config.get("default_api")
@@ -114,9 +126,9 @@ class RAGService:
                 return api
         raise ValueError(f"Default API '{default_api_name}' not found in api_configuration.yaml")
 
-    def _create_embedder(self, persona_id: Optional[int] = None) -> OpenAIEmbeddings:
+    async def _create_embedder(self, persona_id: Optional[int] = None) -> OpenAIEmbeddings:
         """Create embedder from resolved API config (per persona when provided)."""
-        api_config = self._resolve_api_config(persona_id)
+        api_config = await self._resolve_api_config(persona_id)
         logger.info(f"Creating embedder for model: {api_config.get('model')}")
         return OpenAIEmbeddings(
             model=api_config.get("model"),
@@ -124,9 +136,30 @@ class RAGService:
             openai_api_key=api_config.get("api_key"),
         )
 
-    def _create_llm(self, persona_id: Optional[int] = None) -> OpenAI:
+    def _create_embedder_sync(self, persona_id: Optional[int] = None) -> OpenAIEmbeddings:
+        """Create embedder synchronously (for prototype mode)."""
+        api_config = self._resolve_api_config_sync(persona_id)
+        logger.info(f"Creating embedder for model: {api_config.get('model')}")
+        return OpenAIEmbeddings(
+            model=api_config.get("model"),
+            openai_api_base=api_config.get("base_url"),
+            openai_api_key=api_config.get("api_key"),
+        )
+
+    async def _create_llm(self, persona_id: Optional[int] = None) -> OpenAI:
         """Create LLM from resolved API config (per persona when provided)."""
-        api_config = self._resolve_api_config(persona_id)
+        api_config = await self._resolve_api_config(persona_id)
+        logger.info(f"Creating LLM for model: {api_config.get('model')}")
+        return OpenAI(
+            model=api_config.get("model"),
+            openai_api_base=api_config.get("base_url"),
+            openai_api_key=api_config.get("api_key"),
+            temperature=api_config.get("temperature", 0.4),
+        )
+
+    def _create_llm_sync(self, persona_id: Optional[int] = None) -> OpenAI:
+        """Create LLM synchronously (for prototype mode)."""
+        api_config = self._resolve_api_config_sync(persona_id)
         logger.info(f"Creating LLM for model: {api_config.get('model')}")
         return OpenAI(
             model=api_config.get("model"),
@@ -155,12 +188,16 @@ class RAGService:
         # 2. Load, parse, and split the document
         loader = BSHTMLLoader(filepath)
         docs = loader.load()
-        splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+        splitter = RecursiveCharacterTextSplitter(chunk_size=self.chunk_size, chunk_overlap=self.chunk_overlap)
         split_docs = splitter.split_documents(docs)
         logger.info(f"Document split into {len(split_docs)} chunks.")
 
         # 3. Create Milvus vector store and add documents
-        embedder = self.embedder or self._create_embedder(persona_id)
+        if self.embedder:
+            embedder = self.embedder
+        else:
+            embedder = await self._create_embedder(persona_id)
+
         # Ensure embedder is exercised (tests assert aembed_documents is called)
         try:
             await embedder.aembed_documents([d.page_content for d in split_docs])
@@ -183,25 +220,32 @@ class RAGService:
         
         return {"status": "success", "documents_added": len(doc_ids), "collection_name": collection_name}
 
-    async def ingest_text(self, text: str, persona_id: int) -> dict:
+    async def ingest_text(self, text: str, persona_id: int, source: Optional[str] = None) -> dict:
         """
         Ingests raw text, generates embeddings, and stores them in a persona-specific
         Milvus collection.
         """
+        if source is None:
+            source = "raw_text"
         collection_name = f"persona_{persona_id}_rag"
-        logger.info(f"Starting ingestion for raw text into collection: {collection_name}")
+        logger.info(f"Starting ingestion for text (source={source}) into collection: {collection_name}")
 
         # 1. Create Document object
-        doc = Document(page_content=text, metadata={"source": "raw_text"})
+        doc = Document(page_content=text, metadata={"source": source})
 
         # 2. Split the document
-        splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+        splitter = RecursiveCharacterTextSplitter(chunk_size=self.chunk_size, chunk_overlap=self.chunk_overlap)
         split_docs = splitter.split_documents([doc])
         logger.info(f"Text split into {len(split_docs)} chunks.")
 
         # 3. Create Milvus vector store and add documents
+        if self.embedder:
+            embedder = self.embedder
+        else:
+            embedder = await self._create_embedder(persona_id)
+
         vector_store = Milvus(
-            embedding_function=self.embedder,
+            embedding_function=embedder,
             collection_name=collection_name,
             connection_args={"uri": DEFAULT_MILVUS_URI},
             auto_id=True,
@@ -213,15 +257,52 @@ class RAGService:
         
         return {"status": "success", "documents_added": len(doc_ids), "collection_name": collection_name}
 
-    def _create_retriever(self, persona_id: int, top_k: int = 4) -> Milvus:
+    async def delete_documents_by_source(self, persona_id: int, source: str) -> None:
+        """
+        Deletes documents from the persona's collection matching a specific source.
+        """
+        collection_name = f"persona_{persona_id}_rag"
+        logger.info(f"Attempting to delete documents with source='{source}' from {collection_name}")
+
+        try:
+            # Connect to Milvus
+            connections.connect(alias="default", uri=DEFAULT_MILVUS_URI)
+
+            # Check if collection exists
+            if not Collection(name=collection_name).num_entities > 0:
+                logger.info(f"Collection '{collection_name}' does not exist or is empty. No documents to delete.")
+                return
+
+            # Get the collection
+            collection = Collection(name=collection_name)
+
+            # Delete documents using the expression
+            # Milvus delete operation is synchronous by nature in PyMilvus client
+            expr = f"source == '{source}'"
+            delete_result = collection.delete(expr)
+            
+            logger.info(f"Successfully deleted {delete_result.delete_count} documents from '{collection_name}' with expression: '{expr}'.")
+
+        except Exception as e:
+            logger.error(f"Failed to delete documents by source in collection '{collection_name}': {e}")
+            # Do not re-raise, just log, to avoid breaking the main flow on deletion failure
+
+
+    async def _create_retriever(self, persona_id: int, top_k: Optional[int] = None) -> Milvus:
         """
         Create a Milvus retriever for a specific persona.
         """
+        if top_k is None:
+            top_k = self.default_top_k
         collection_name = f"persona_{persona_id}_rag"
         logger.info(f"Creating retriever for collection: {collection_name}")
         
         # Create Milvus vector store and retriever
-        embedder = self.embedder or self._create_embedder(persona_id)
+        if self.embedder:
+            embedder = self.embedder
+        else:
+            embedder = await self._create_embedder(persona_id)
+            
         vector_store = Milvus(
             embedding_function=embedder,
             collection_name=collection_name,
@@ -238,7 +319,7 @@ class RAGService:
         
         try:
             # Create retriever
-            retriever = self._create_retriever(persona_id, top_k)
+            retriever = await self._create_retriever(persona_id, top_k)
             
             # Retrieve documents
             docs = await retriever.aget_relevant_documents(query)
@@ -279,7 +360,11 @@ Helpful Answer:"""
             prompt = PromptTemplate.from_template(template)
             
             # Create chain
-            llm = self.llm or self._create_llm(persona_id)
+            if self.llm:
+                llm = self.llm
+            else:
+                llm = await self._create_llm(persona_id)
+                
             chain = (
                 {"context": lambda x: self._format_docs(x["docs"]), "question": lambda x: x["question"], "persona_prompt": lambda x: x["persona_prompt"]}
                 | prompt
@@ -288,7 +373,7 @@ Helpful Answer:"""
             )
             
             # Generate response
-            response = chain.invoke({"docs": docs, "question": query, "persona_prompt": persona_prompt})
+            response = await chain.ainvoke({"docs": docs, "question": query, "persona_prompt": persona_prompt})
             logger.info("Generated response successfully")
             
             return response

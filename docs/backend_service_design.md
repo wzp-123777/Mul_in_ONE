@@ -13,35 +13,54 @@ API 层 -> 应用协调层 -> RuntimeSession 管理 -> Scheduler/队列层 -> �
 - POST /api/sessions/{id}/messages 发送消息
 - GET /api/sessions/{id} 获取会话
 - WebSocket /ws/sessions/{id}?ws_token=...
+- POST /api/personas/{id}/ingest - RAG 知识摄取
+- POST /api/personas/{id}/ingest_text - 文本摄取
 
 ## 5. 数据模型
-包含 Session, Message, Persona, RuntimeSession, 向量检索集合，消息与 Persona 多对一关联。
+包含 Session, Message, Persona, RuntimeSession, 向量检索集合，消息与 Persona 多对一关联。Persona 支持 background 字段，该字段内容会自动摄取到 Milvus 向量库作为 RAG 知识源，而非直接拼接到系统提示。
 
 ## 6. Runtime & Scheduler 策略
 RuntimeSession 保持 sticky session 行为，对同一会话消息使用同一执行上下文；使用 asyncio.Queue 作为内部调度结构，支持优先级扩展。
 
 ## 7. 配置与依赖
-api_configuration.yaml 管理模型与 persona 绑定；依赖 OpenAI 兼容接口、Milvus、SQLAlchemy、FastAPI。
+数据库驱动的 API 配置解析（APIProfile 表），运行时动态加载；依赖 OpenAI 兼容接口、Milvus、SQLAlchemy、FastAPI、LangChain。
 
 ## 8. 可观测性
 计划添加 tracing (OpenTelemetry)、metrics (处理耗时、队列长度)、structured logging。
 
 ## 9. 迭代里程碑
-里程碑1：基础会话与消息流转。里程碑2：RAG 集成。里程碑3：多 Persona 调度优化。里程碑4：可观测性与治理。
+- ✅ 里程碑1：基础会话与消息流转
+- ✅ 里程碑2：RAG 集成（摄取、检索、生成）
+- ✅ 里程碑3：数据库配置解析器
+- 🔄 里程碑4：前端 RAG 界面
+- 📋 里程碑5：可观测性与治理
 
-## 10. 进度记录
+## 10. RAG 集成与 Background 字段 (已完成)
+- **摄取流程**: URL 抓取 -> 文本切片 -> Embeddings -> Milvus 存储
+- **检索流程**: 向量相似度检索 -> Top-K 文档 -> 格式化上下文
+- **生成流程**: 上下文注入系统提示 -> LLM 调用 -> 流式返回
+- **配置解析**: 按 Persona 动态解析 API 配置（model, base_url, api_key）
+- **依赖注入**: rag_dependencies.py 避免循环依赖，persona_function.py 异步注入检索上下文
+- **Background 自动摄取**: 创建/更新 Persona 时，background 字段自动触发 RAG ingest_text，存储到向量库而非直接拼接
+
+
+## 11. 进度记录
 使用 docs/ 目录下进度文件每日记录，含完成项与问题。
 
-## 11. 开放问题
+**最新更新 (2025-11-26)**: RAG 全链路集成完成，包括数据库解析器、Persona 背景字段支持、无限会话语义。22 项测试全部通过。
+
+## 12. 开放问题
 - 调度优先级策略细化
 - RAG 缓存刷新策略
 - 失败重试次数与死信队列
+- 检索质量优化（查询改写、重排序）
+- 向量库管理 API（清理、统计）
 
-## 12. 模块接口速览
-Scheduler: push(message), pop(); RuntimeSession: run(message); Persona: build_prompt(); RAGService: ingest_url(), generate_response();
+## 13. 模块接口速览
+Scheduler: push(message), pop(); RuntimeSession: run(message); Persona: build_prompt(); RAGService: ingest_url(), ingest_text(), retrieve_documents(), generate_response();
 
-## 13. 测试策略
-单元测试：模型/调度/配置解析；集成测试：消息生命周期；文档测试：设计文档关键段落与关键字；性能测试：高并发消息吞吐。
+## 14. 测试策略
+单元测试：模型/调度/配置解析/RAG 服务；集成测试：消息生命周期；文档测试：设计文档关键段落与关键字；性能测试：高并发消息吞吐。
 
 ### 关键词引用
-RuntimeSession / asyncio.Queue / sticky session / POST /api/sessions/{id}/messages / ws_token
+RuntimeSession / asyncio.Queue / sticky session / POST /api/sessions/{id}/messages / ws_token / RAGService / Milvus / retrieve_documents / ingest_url / persona_id

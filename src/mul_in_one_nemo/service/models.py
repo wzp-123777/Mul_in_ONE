@@ -65,3 +65,4 @@ class MessageRecord:
     sender: str
     content: str
     created_at: datetime
+    background: str | None = None

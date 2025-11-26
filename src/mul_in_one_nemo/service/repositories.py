@@ -133,7 +133,13 @@ class InMemorySessionRepository(SessionRepository):
     async def add_message(self, session_id: str, sender: str, content: str) -> MessageRecord:
         async with self._lock:
             message_id = f"msg_{uuid.uuid4().hex[:8]}"
-            record = MessageRecord(id=message_id, session_id=session_id, sender=sender, content=content)
+            record = MessageRecord(
+                id=message_id,
+                session_id=session_id,
+                sender=sender,
+                content=content,
+                created_at=datetime.now(timezone.utc),
+            )
             self._messages[session_id].append(record)
             # Limit stored history to avoid unbounded growth
             if len(self._messages[session_id]) > 200:
@@ -150,8 +156,16 @@ class InMemorySessionRepository(SessionRepository):
             record = self._records.get(session_id)
             if record is None:
                 raise ValueError("Session not found")
-            record.user_persona = user_persona
-            return record
+            updated = SessionRecord(
+                id=record.id,
+                tenant_id=record.tenant_id,
+                user_id=record.user_id,
+                created_at=record.created_at,
+                user_persona=user_persona,
+                participants=record.participants,
+            )
+            self._records[session_id] = updated
+            return updated
 
     async def update_session_participants(self, session_id: str, persona_ids: List[int]) -> SessionRecord:
         async with self._lock:
@@ -770,6 +784,24 @@ class SQLAlchemyPersonaRepository(PersonaDataRepository, BaseSQLAlchemyRepositor
             max_agents_per_turn=max_agents_per_turn,
             memory_window=memory_window,
         )
+
+    async def get_persona_api_config(self, persona_id: int) -> dict | None:
+        async with self._session_scope() as db:
+            stmt = (
+                select(APIProfileRow)
+                .join(PersonaRow, PersonaRow.api_profile_id == APIProfileRow.id)
+                .where(PersonaRow.id == persona_id)
+            )
+            row = (await db.execute(stmt)).scalar_one_or_none()
+            if row is None:
+                return None
+            
+            return {
+                "model": row.model,
+                "base_url": row.base_url,
+                "api_key": self._decrypt_api_key(row.api_key_cipher),
+                "temperature": row.temperature,
+            }
 
     async def _assert_profile_owned(self, db: AsyncSession, tenant_db_id: int, profile_id: int) -> APIProfileRow:
         stmt = select(APIProfileRow).where(

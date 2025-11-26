@@ -9,21 +9,24 @@
 ## ✨ 核心特性
 
 - **动态对话调度**: 智能体基于话题兴趣、主动性和上下文动态决定发言，实现流畅、自然的群聊。
+- **RAG 知识增强**: 完整集成 Retrieval-Augmented Generation，支持为 Persona 导入背景知识（URL/文本），通过向量检索增强对话质量。
 - **服务化架构**: 使用 FastAPI 构建的健壮后端，支持高并发，易于部署和扩展。
 - **数据库持久化**: 使用 SQLAlchemy 和 Alembic 管理对话会话和历史记录，支持 PostgreSQL。
-- **灵活的 Persona 系统**: 通过 YAML 文件定义智能体的性格、语气、专长，并可绑定不同的 LLM API。
+- **灵活的 Persona 系统**: 支持数据库动态配置 Persona 性格、语气、背景经历（通过 RAG 摄取为知识库），并可按 Persona 绑定不同的 LLM API 配置。
 - **双重使用模式**:
   - **Web 服务**: 作为后端服务运行，通过 API 与前端或移动端应用交互。
   - **命令行 (CLI)**: 直接在终端中进行多智能体对话，方便快速测试和演示。
 - **用户无缝交互**: 用户可随时在对话中插入消息，智能体会自然地衔接上下文进行讨论。
-- **高级对话功能**: 支持流式输出、`@`提及、发言冷却机制，确保对话质量。
+- **高级对话功能**: 支持流式输出、`@`提及、发言冷却机制，无限历史窗口和回合限制。
 
 ## 🛠️ 技术栈
 
 - **后端**: Python, FastAPI, SQLAlchemy
-- **前端**: Vue.js, Vite, DevUI
+- **前端**: Vue.js, Quasar
 - **对话引擎**: NVIDIA NeMo Agent Toolkit
-- **数据库**: PostgreSQL, Alembic
+- **数据库**: PostgreSQL (Alembic 迁移)
+- **向量数据库**: Milvus (RAG 检索)
+- **LLM 集成**: LangChain, OpenAI
 - **包管理**: uv, npm
 
 ## 🏗️ 项目结构
@@ -48,7 +51,7 @@
 ## 📚 文档
 
 - [项目架构与设计 (Architecture)](docs/architecture.md)
-- [开发路线图 (Roadmap)](docs/roadmap.md)
+- [后端服务设计 (Backend Service Design)](docs/backend_service_design.md)
 
 ## 🚀 本地开发设置
 
@@ -58,6 +61,8 @@
 - [uv](https://github.com/astral-sh/uv) (推荐的 Python 包管理器)
 - [Node.js](https://nodejs.org/) 和 npm
 - PostgreSQL
+- Milvus (向量数据库，用于 RAG 功能)
+- Docker (推荐用于运行 Milvus)
 
 ### 2. 环境初始化
 
@@ -77,20 +82,27 @@ source .venv/bin/activate
 
 ## ⚡ 如何运行
 
-### 1. 启动数据库
+### 1. 启动数据库服务
 
 ```bash
-# 使用统一控制脚本启动 PostgreSQL 服务
-./scripts/db_control.sh start
+# 启动 PostgreSQL (用于持久化存储)
+./scripts/db_start.sh
+
+# 启动 Milvus (用于向量检索)
+docker run -d --name milvus-standalone \
+  -p 19530:19530 -p 9091:9091 \
+  -e ETCD_USE_EMBED=true \
+  -v $(pwd)/.milvus:/var/lib/milvus \
+  milvusdb/milvus:latest
 ```
 
 *数据库连接信息由 `DATABASE_URL` 环境变量控制 (默认为 `postgresql+asyncpg://postgres:postgres@localhost:5432/mul_in_one`)。*
+*Milvus 默认连接到 `http://localhost:19530`。*
 
-其他可用命令：
-- `./scripts/db_control.sh stop`: 停止数据库
-- `./scripts/db_control.sh restart`: 重启数据库
-- `./scripts/db_control.sh status`: 查看状态
-- `./scripts/db_control.sh reset`: 重置数据库（警告：会删除所有数据）
+其他可用脚本：
+
+- `./scripts/db_stop.sh`: 停止 PostgreSQL
+- `./scripts/db_reset.sh`: 重置数据库（警告：会删除所有数据）
 
 ### 2. 启动后端服务
 
@@ -140,12 +152,12 @@ uv run mul-in-one-nemo --message "大家好，我们来聊聊最近的天气吧�
 pytest
 ```
 
-## 📅 接下来的目标
+## 📅 项目状态与下一步
 
-详细的开发规划请参考 [Roadmap](docs/roadmap.md)。
+### ✅ 已完成功能
 
-目前的核心目标是将 NVIDIA NeMo Agent Toolkit 的 **RAG (Retrieval-Augmented Generation)** 能力深度整合到项目中：
-- **后端集成**: 构建文档上传、索引和向量检索服务 (基于 Milvus)。
-- **Persona 增强**: 为 Persona 赋予长文本背景知识（如人物传记、设定集），使其能通过 RAG 检索并在对话中运用这些知识。
-- **前端支持**: 提供可视化的知识库管理界面。
-
+- **核心对话系统**: 多智能体动态调度、流式输出、WebSocket 实时推送
+- **RAG 集成**: 完整的向量摄取、检索、生成链路，支持 URL/文本导入
+- **数据库配置解析**: 运行时按 Persona 动态加载 LLM API 配置
+- **Persona 背景支持**: 前后端全链路支持背景经历字段
+- **无限会话语义**: 支持 -1 表示不限制历史窗口和回合数
