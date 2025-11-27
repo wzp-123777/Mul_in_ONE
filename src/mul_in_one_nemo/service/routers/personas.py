@@ -282,11 +282,12 @@ async def create_persona(
                     record.id,
                     payload.tenant_id,
                 )
-                await rag_service.ingest_text(
-                    text=payload.background,
-                    persona_id=record.id,
-                    source="background"
-                )
+                    await rag_service.ingest_text(
+                        text=background,
+                        persona_id=record.id,
+                        tenant_id=tenant_id,
+                        source="background"
+                    )
                 logger.info("Background ingestion completed for persona_id=%s", record.id)
             except Exception as exc:  # pragma: no cover - best effort logging
                 logger.warning(
@@ -325,10 +326,11 @@ async def update_persona(
             if background_text.strip():
                 try:
                     logger.info("Refreshing background documents for persona_id=%s", persona_id)
-                    await rag_service.delete_documents_by_source(persona_id, source="background")
+                    await rag_service.delete_documents_by_source(persona_id, tenant_id, source="background")
                     await rag_service.ingest_text(
                         text=background_text,
                         persona_id=persona_id,
+                        tenant_id=tenant_id,
                         source="background"
                     )
                     logger.info("Background re-ingestion completed for persona_id=%s", persona_id)
@@ -361,11 +363,12 @@ async def delete_persona(
 async def ingest_persona_data(
     persona_id: int,
     payload: PersonaIngestRequest,
+    tenant_id: str = Query(..., description="Tenant identifier"),
     rag_service: RAGService = Depends(get_rag_service),
 ) -> PersonaIngestResponse:
     try:
-        logger.info("Manual URL ingest for persona_id=%s url=%s", persona_id, payload.url)
-        result = await rag_service.ingest_url(payload.url, persona_id)
+        logger.info("Manual URL ingest for persona_id=%s tenant=%s url=%s", persona_id, tenant_id, payload.url)
+        result = await rag_service.ingest_url(payload.url, persona_id, tenant_id)
         return PersonaIngestResponse(
             status=result["status"],
             documents_added=result["documents_added"],
@@ -378,11 +381,12 @@ async def ingest_persona_data(
 async def ingest_persona_text(
     persona_id: int,
     payload: PersonaTextIngestRequest,
+    tenant_id: str = Query(..., description="Tenant identifier"),
     rag_service: RAGService = Depends(get_rag_service),
 ) -> PersonaIngestResponse:
     try:
-        logger.info("Manual text ingest for persona_id=%s (chars=%s)", persona_id, len(payload.text))
-        result = await rag_service.ingest_text(payload.text, persona_id)
+        logger.info("Manual text ingest for persona_id=%s tenant=%s (chars=%s)", persona_id, tenant_id, len(payload.text))
+        result = await rag_service.ingest_text(payload.text, persona_id, tenant_id)
         return PersonaIngestResponse(
             status=result["status"],
             documents_added=result["documents_added"],
@@ -413,10 +417,11 @@ async def refresh_persona_rag(
                 detail="Persona has no background content to ingest"
             )
 
-        await rag_service.delete_documents_by_source(persona_id, source="background")
+        await rag_service.delete_documents_by_source(persona_id, tenant_id, source="background")
         result = await rag_service.ingest_text(
             text=persona.background,
             persona_id=persona_id,
+            tenant_id=tenant_id,
             source="background"
         )
 
