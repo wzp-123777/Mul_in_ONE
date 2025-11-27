@@ -719,6 +719,23 @@ class SQLAlchemyPersonaRepository(PersonaDataRepository, BaseSQLAlchemyRepositor
                 records.append(self._to_persona_record(persona, tenant_name, profile))
             return records
 
+    async def get_persona_by_id(self, persona_id: int) -> PersonaRecord | None:
+        """Fetch a persona by ID without requiring tenant_id (for internal use)."""
+        async with self._session_scope() as db:
+            logger.info("Fetching persona by id=%s", persona_id)
+            stmt = (
+                select(PersonaRow, TenantRow.name, APIProfileRow)
+                .join(TenantRow, PersonaRow.tenant_id == TenantRow.id)
+                .outerjoin(APIProfileRow, PersonaRow.api_profile_id == APIProfileRow.id)
+                .where(PersonaRow.id == persona_id)
+            )
+            result = await db.execute(stmt)
+            row = result.first()
+            if row is None:
+                return None
+            persona, tenant_name, profile = row
+            return self._to_persona_record(persona, tenant_name, profile)
+
     async def get_persona(self, tenant_id: str, persona_id: int) -> PersonaRecord | None:
         async with self._session_scope() as db:
             logger.info("Fetching persona id=%s tenant=%s", persona_id, tenant_id)

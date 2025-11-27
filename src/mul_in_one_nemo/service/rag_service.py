@@ -175,12 +175,12 @@ class RAGService:
             temperature=api_config.get("temperature", 0.4),
         )
 
-    async def ingest_url(self, url: AnyHttpUrl, persona_id: int) -> dict:
+    async def ingest_url(self, url: str, persona_id: int, tenant_id: str) -> dict:
         """
-        Scrapes a URL, generates embeddings, and stores them in a persona-specific
+        Fetch content from a URL, generate embeddings, and store them in a persona-specific
         Milvus collection.
         """
-        collection_name = f"persona_{persona_id}_rag"
+        collection_name = f"{tenant_id}_persona_{persona_id}_rag"
         logger.info(f"Starting ingestion for URL: {url} into collection: {collection_name}")
 
         # 1. Scrape and cache the URL content
@@ -227,14 +227,14 @@ class RAGService:
         
         return {"status": "success", "documents_added": len(doc_ids), "collection_name": collection_name}
 
-    async def ingest_text(self, text: str, persona_id: int, source: Optional[str] = None) -> dict:
+    async def ingest_text(self, text: str, persona_id: int, tenant_id: str, source: Optional[str] = None) -> dict:
         """
         Ingests raw text, generates embeddings, and stores them in a persona-specific
         Milvus collection.
         """
         if source is None:
             source = "raw_text"
-        collection_name = f"persona_{persona_id}_rag"
+        collection_name = f"{tenant_id}_persona_{persona_id}_rag"
         logger.info(f"Starting ingestion for text (source={source}) into collection: {collection_name}")
 
         # 1. Create Document object
@@ -264,24 +264,30 @@ class RAGService:
         
         return {"status": "success", "documents_added": len(doc_ids), "collection_name": collection_name}
 
-    async def delete_documents_by_source(self, persona_id: int, source: str) -> None:
+    async def delete_documents_by_source(self, persona_id: int, tenant_id: str, source: str) -> None:
         """
         Deletes documents from the persona's collection matching a specific source.
         """
-        collection_name = f"persona_{persona_id}_rag"
+        from pymilvus import utility
+        
+        collection_name = f"{tenant_id}_persona_{persona_id}_rag"
         logger.info(f"Attempting to delete documents with source='{source}' from {collection_name}")
 
         try:
             # Connect to Milvus
             connections.connect(alias="default", uri=DEFAULT_MILVUS_URI)
 
-            # Check if collection exists
-            if not Collection(name=collection_name).num_entities > 0:
-                logger.info(f"Collection '{collection_name}' does not exist or is empty. No documents to delete.")
+            # Check if collection exists using utility
+            if not utility.has_collection(collection_name):
+                logger.info(f"Collection '{collection_name}' does not exist. Skipping delete.")
                 return
 
             # Get the collection
             collection = Collection(name=collection_name)
+            
+            if collection.num_entities == 0:
+                logger.info(f"Collection '{collection_name}' is empty. No documents to delete.")
+                return
 
             # Delete documents using the expression
             # Milvus delete operation is synchronous by nature in PyMilvus client
@@ -295,13 +301,13 @@ class RAGService:
             # Do not re-raise, just log, to avoid breaking the main flow on deletion failure
 
 
-    async def _create_retriever(self, persona_id: int, top_k: Optional[int] = None) -> Milvus:
+    async def _create_retriever(self, persona_id: int, tenant_id: str, top_k: Optional[int] = None) -> Milvus:
         """
         Create a Milvus retriever for a specific persona.
         """
         if top_k is None:
             top_k = self.default_top_k
-        collection_name = f"persona_{persona_id}_rag"
+        collection_name = f"{tenant_id}_persona_{persona_id}_rag"
         logger.info(f"Creating retriever for collection: {collection_name}")
         
         # Create Milvus vector store and retriever
@@ -318,15 +324,15 @@ class RAGService:
         
         return vector_store.as_retriever(search_kwargs={"k": top_k})
 
-    async def retrieve_documents(self, query: str, persona_id: int, top_k: int = 4) -> List[Document]:
+    async def retrieve_documents(self, query: str, persona_id: int, tenant_id: str, top_k: int = 4) -> List[Document]:
         """
         Retrieve relevant documents from Milvus for a given query and persona.
         """
-        logger.info(f"Retrieving documents for query: {query} for persona_id: {persona_id}")
+        logger.info(f"Retrieving documents for query: {query} for persona_id: {persona_id} tenant: {tenant_id}")
         
         try:
             # Create retriever
-            retriever = await self._create_retriever(persona_id, top_k)
+            retriever = await self._create_retriever(persona_id, tenant_id, top_k)
             
             # Retrieve documents (using ainvoke instead of deprecated aget_relevant_documents)
             docs = await retriever.ainvoke(query)
@@ -343,15 +349,15 @@ class RAGService:
         """
         return "\n\n".join(doc.page_content for doc in docs)
 
-    async def generate_response(self, query: str, persona_id: int, persona_prompt: str = "", top_k: int = 4) -> str:
+    async def generate_response(self, query: str, persona_id: int, tenant_id: str, persona_prompt: str = "", top_k: int = 4) -> str:
         """
         Generate a response using RAG for a given query and persona.
         """
-        logger.info(f"Generating response for query: {query} for persona_id: {persona_id}")
+        logger.info(f"Generating response for query: {query} for persona_id: {persona_id} tenant: {tenant_id}")
         
         try:
             # Retrieve relevant documents
-            docs = await self.retrieve_documents(query, persona_id, top_k)
+            docs = await self.retrieve_documents(query, persona_id, tenant_id, top_k)
             
             # Create prompt template
             template = """{persona_prompt}
