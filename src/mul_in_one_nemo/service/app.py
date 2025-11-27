@@ -13,7 +13,12 @@ from mul_in_one_nemo.service.routers import personas, sessions, debug
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
-    app = FastAPI(title="Mul-in-One Backend", version="0.1.0")
+    app = FastAPI(
+        title="Mul-in-One Backend",
+        version="0.1.0",
+        docs_url=None,
+        redoc_url=None
+    )
 
     # Configure application-wide logging to a rotating file
     log_dir = os.path.join(os.getcwd(), "logs")
