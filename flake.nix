@@ -25,6 +25,7 @@
             pkgs.docker-compose
             (if pkgs.stdenv.isDarwin then pkgs.colima else null)
             pkgs.zsh
+            pkgs.stdenv.cc.cc.lib
           ];
 
           shellHook = ''
@@ -34,15 +35,19 @@
             export NPM_CONFIG_PREFIX="$PWD/.npm-global"
             mkdir -p "$NPM_CONFIG_PREFIX"
             export PATH="$NPM_CONFIG_PREFIX/bin:$PATH"
+            export LD_LIBRARY_PATH="${pkgs.stdenv.cc.cc.lib}/lib:''${LD_LIBRARY_PATH:-}"
             echo "Python (uv-provided): $(python3 --version)"
             echo "Node: $(node --version)"
             export POSTGRES_DATA="$PWD/.postgresql/data"
+            export POSTGRES_RUN_DIR="$PWD/.postgresql/run"
             mkdir -p "$POSTGRES_DATA"
+            mkdir -p "$POSTGRES_RUN_DIR"
             echo "PostgreSQL data directory: $POSTGRES_DATA"
+            echo "PostgreSQL run directory: $POSTGRES_RUN_DIR"
             if [ ! -f "$POSTGRES_DATA/PG_VERSION" ]; then
-              echo " * Run: initdb -D '$POSTGRES_DATA' --auth=trust"
+              echo " * Run: ./scripts/db_control.sh start"
             else
-              echo " * PostgreSQL cluster initialized. Use 'pg_ctl -D $POSTGRES_DATA start'"
+              echo " * PostgreSQL cluster initialized. Use './scripts/db_control.sh start'"
             fi
 
             # Switch to zsh if we are in an interactive shell

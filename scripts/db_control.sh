@@ -7,6 +7,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Configuration
 POSTGRES_DATA="${POSTGRES_DATA:-$ROOT_DIR/.postgresql/data}"
+POSTGRES_RUN_DIR="${POSTGRES_RUN_DIR:-$ROOT_DIR/.postgresql/run}"
 LOG_FILE="${POSTGRES_LOG:-$POSTGRES_DATA/postgres.log}"
 
 function show_help {
@@ -26,10 +27,21 @@ if [ -z "${1:-}" ]; then
 fi
 
 function start_postgres {
-    if [ ! -d "$POSTGRES_DATA" ]; then
-        echo "Postgres data directory '$POSTGRES_DATA' does not exist. Run './scripts/db_control.sh reset' first."
-        exit 1
+    # Auto-initialize if data directory doesn't exist
+    if [ ! -d "$POSTGRES_DATA" ] || [ ! -f "$POSTGRES_DATA/PG_VERSION" ]; then
+        echo "PostgreSQL data directory not initialized. Initializing now..."
+        mkdir -p "$POSTGRES_DATA"
+        mkdir -p "$POSTGRES_RUN_DIR"
+        initdb -D "$POSTGRES_DATA" --auth=trust -U postgres
+        
+        # Configure PostgreSQL to use our custom run directory
+        echo "unix_socket_directories = '$POSTGRES_RUN_DIR'" >> "$POSTGRES_DATA/postgresql.conf"
+        
+        echo "PostgreSQL cluster initialized at $POSTGRES_DATA"
     fi
+    
+    # Ensure run directory exists
+    mkdir -p "$POSTGRES_RUN_DIR"
 
     if pg_ctl -D "$POSTGRES_DATA" status >/dev/null 2>&1; then
         echo "PostgreSQL already running for data directory $POSTGRES_DATA"
@@ -54,15 +66,23 @@ function start_postgres {
     echo "PostgreSQL is ready."
 
     # Check if database exists
-    if ! psql -U postgres -lqt | cut -d \| -f 1 | grep -qw mul_in_one; then
+    if ! psql -h "$POSTGRES_RUN_DIR" -U postgres -lqt | cut -d \| -f 1 | grep -qw mul_in_one; then
         echo "Database 'mul_in_one' not found. Creating it..."
-        createdb -U postgres mul_in_one
+        createdb -h "$POSTGRES_RUN_DIR" -U postgres mul_in_one
     else
         echo "Database 'mul_in_one' already exists."
     fi
 
     echo "Running Alembic database migrations..."
-    (cd "$ROOT_DIR" && alembic upgrade head)
+    # Use uv if available, otherwise try direct alembic
+    if command -v uv &> /dev/null; then
+        (cd "$ROOT_DIR" && uv run alembic upgrade head)
+    elif command -v alembic &> /dev/null; then
+        (cd "$ROOT_DIR" && alembic upgrade head)
+    else
+        echo "Warning: Neither 'uv' nor 'alembic' command found. Skipping migrations."
+        echo "Please run migrations manually: cd $ROOT_DIR && uv run alembic upgrade head"
+    fi
     echo "Alembic migrations applied."
 }
 
@@ -114,7 +134,11 @@ function reset_postgres {
 
     mkdir -p "$POSTGRES_DATA"
     echo "Initializing new PostgreSQL cluster..."
+    mkdir -p "$POSTGRES_RUN_DIR"
     initdb -D "$POSTGRES_DATA" --auth=trust -U postgres
+    
+    # Configure PostgreSQL to use our custom run directory
+    echo "unix_socket_directories = '$POSTGRES_RUN_DIR'" >> "$POSTGRES_DATA/postgresql.conf"
 
     echo "Temporarily starting server to create database..."
     pg_ctl -D "$POSTGRES_DATA" -l "$POSTGRES_DATA/postgres_reset.log" start
@@ -132,7 +156,7 @@ function reset_postgres {
     done
 
     echo "Creating application database 'mul_in_one'..."
-    createdb -U postgres mul_in_one
+    createdb -h "$POSTGRES_RUN_DIR" -U postgres mul_in_one
 
     echo "Stopping temporary server..."
     pg_ctl -D "$POSTGRES_DATA" stop -m fast

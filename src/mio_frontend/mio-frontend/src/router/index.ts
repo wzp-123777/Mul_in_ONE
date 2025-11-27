@@ -22,13 +22,9 @@ const routes = [
       { path: 'sessions', component: SessionsPage },
       { path: 'personas', component: PersonasPage },
       { path: 'profiles', component: ApiProfilesPage },
-      { path: 'debug', component: DebugPage }
+      { path: 'debug', component: DebugPage },
+      { path: 'chat/:id', component: ChatConversationPage }
     ]
-  },
-  {
-    path: '/chat/:id',
-    component: ChatConversationPage,
-    meta: { requiresAuth: true }
   }
 ]
 

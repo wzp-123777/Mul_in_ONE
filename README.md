@@ -193,11 +193,18 @@ docker run -d --name milvus-standalone \
 #### 5. 启动后端服务
 
 ```bash
-# 确保虚拟环境已激活
-source .venv/bin/activate
+# 方式 1: 使用启动脚本 (推荐)
+./scripts/start_backend.sh
 
-# 启动 FastAPI 服务 (开启热重载)
-uvicorn mul_in_one_nemo.service.app:create_app --reload --host 0.0.0.0 --port 8000
+# 方式 2: 手动启动
+cd /home/lonnet/Developers/Mul_in_ONE
+uv run uvicorn mul_in_one_nemo.service.app:create_app \
+  --factory \
+  --reload \
+  --host 0.0.0.0 \
+  --port 8000 \
+  --reload-exclude "external/*" \
+  --reload-exclude ".postgresql/*"
 ```
 
 后端将在 `http://localhost:8000` 运行

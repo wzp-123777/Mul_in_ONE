@@ -25,6 +25,10 @@ pgdata/
 *.sqlite3
 *.db
 
+# Milvus 数据
+.milvus/
+external/NeMo-Agent-Toolkit/examples/deploy/volumes/
+
 # Node.js
 node_modules/
 npm-debug.log*
