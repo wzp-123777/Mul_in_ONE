@@ -282,12 +282,12 @@ async def create_persona(
                     record.id,
                     payload.tenant_id,
                 )
-                    await rag_service.ingest_text(
-                        text=background,
-                        persona_id=record.id,
-                        tenant_id=tenant_id,
-                        source="background"
-                    )
+                await rag_service.ingest_text(
+                    text=background,
+                    persona_id=record.id,
+                    tenant_id=tenant_id,
+                    source="background"
+                )
                 logger.info("Background ingestion completed for persona_id=%s", record.id)
             except Exception as exc:  # pragma: no cover - best effort logging
                 logger.warning(
