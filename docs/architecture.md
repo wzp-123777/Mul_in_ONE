@@ -141,49 +141,84 @@ graph TD
    - FastAPI 依赖注入配置
    - 单例模式实现
    - 服务实例管理
+
    9. **运行时模块** ([src/mul_in_one_nemo/runtime.py](src/mul_in_one_nemo/runtime.py:19))
-   
+
    - 与 NVIDIA NeMo Agent Toolkit 集成
    - 多智能体运行时环境
    - 注册 Persona 函数与通用工具（WebSearch、RagQuery）
-10. **调度器模块** ([src/mul_in_one_nemo/scheduler.py](src/mul_in_one_nemo/scheduler.py:19))
+9. **调度器模块** ([src/mul_in_one_nemo/scheduler.py](src/mul_in_one_nemo/scheduler.py:19))
 
-    - 多智能体对话调度
-    - 主动性计算
-    - 冷却机制管理
-11. **内存管理模块** ([src/mul_in_one_nemo/memory.py](src/mul_in_one_nemo/memory.py:20))
+   - 多智能体对话调度
+   - 主动性计算
+   - 冷却机制管理
+10. **内存管理模块** ([src/mul_in_one_nemo/memory.py](src/mul_in_one_nemo/memory.py:20))
 
     - 对话历史管理
     - 消息存储和检索
-12. **Persona模块** ([src/mul_in_one_nemo/persona.py](src/mul_in_one_nemo/persona.py:10))
+11. **Persona模块** ([src/mul_in_one_nemo/persona.py](src/mul_in_one_nemo/persona.py:10))
 
     - Persona 模型定义
     - YAML 配置文件加载
     - Persona 设置管理
-13. **CLI模块** ([src/mul_in_one_nemo/cli.py](src/mul_in_one_nemo/cli.py:36))
+12. **CLI模块** ([src/mul_in_one_nemo/cli.py](src/mul_in_one_nemo/cli.py:36))
 
     - 命令行接口实现
     - 交互式对话驱动
-14. **RAG服务模块** ([src/mul_in_one_nemo/service/rag_service.py](src/mul_in_one_nemo/service/rag_service.py:1))
+13. **RAG服务模块** ([src/mul_in_one_nemo/service/rag_service.py](src/mul_in_one_nemo/service/rag_service.py:1))
 
     - 知识库摄取（URL/文本）
     - Milvus 向量存储集成
     - 文档检索（供 RagQuery 工具调用）
-15. **工具模块**（NAT 标准化实现）
-    - **WebSearch 工具** ([src/mul_in_one_nemo/tools/web_search_tool.py](src/mul_in_one_nemo/tools/web_search_tool.py))
-      - 自包含实现：内置 DuckDuckGo HTML 搜索和页面抓取
-      - 输入：query, top_k, fetch_snippets
-      - 输出：title, url, snippet（可选）
-      - 无外部依赖服务，直接使用 httpx 和正则解析
-    - **RagQuery 工具** ([src/mul_in_one_nemo/tools/rag_query_tool.py](src/mul_in_one_nemo/tools/rag_query_tool.py))
-      - 封装 RAGService.retrieve_documents
-      - 输入：query, persona_id, top_k
-      - 输出：passages（text + source）
-      - LLM 按需调用，无预注入行为
-
+    - 支持动态租户配置（tenant_id 关联）
     - LangChain 集成（Embeddings, LLM）
-    - 数据库配置动态解析
-15. **RAG依赖模块** ([src/mul_in_one_nemo/service/rag_dependencies.py](src/mul_in_one_nemo/service/rag_dependencies.py:1))
+14. **工具模块**（NAT 标准化实现 - Tool-First 设计）
+
+    Mio 采用**工具优先(Tool-First)**设计理念,将知识检索和外部能力封装为标准化的NAT工具,由LLM根据对话上下文**按需调用**,而非预先注入上下文。这种设计显著提升了系统灵活性和token效率。
+
+    - **WebSearch 工具** ([src/mul_in_one_nemo/tools/web_search_tool.py](src/mul_in_one_nemo/tools/web_search_tool.py))
+
+      - **功能**: 自包含的Web搜索实现,内置 DuckDuckGo HTML 搜索引擎和页面内容抓取
+      - **输入参数**: query(搜索词), top_k(结果数,默认3), fetch_snippets(是否抓取页面,默认True)
+      - **输出格式**: `[{"title": "...", "url": "...", "snippet": "..."}]`
+      - **技术特点**: 无外部依赖服务,直接使用 httpx 和正则解析,支持失败重试和内容清洗
+      - **调用时机**: LLM判断需要外部实时信息时主动调用
+    - **RagQuery 工具** ([src/mul_in_one_nemo/tools/rag_query_tool.py](src/mul_in_one_nemo/tools/rag_query_tool.py))
+
+      - **功能**: 封装 RAGService.retrieve_documents,按需检索Persona专属知识库
+      - **输入参数**: query(查询词), persona_id(目标Persona ID), top_k(文档数,默认5)
+      - **输出格式**: `[{"text": "文档内容", "source": "来源URL/标识"}]`
+      - **技术特点**: 动态路由到对应Persona的Milvus Collection,语义相似度排序
+      - **调用时机**: LLM判断需要专业知识或背景信息时主动调用
+      - **优势**: 避免预注入大量无关知识占用token,LLM按需精准检索,支持多轮精炼
+    - **设计理念对比**:
+
+      ```
+      传统RAG(预注入):  [System Prompt + 全部知识库Top-K + 历史] → LLM
+                      ↓ 问题: Token浪费,上下文污染
+
+      Tool-First:     [System Prompt + 工具定义 + 历史] → LLM
+                      ↓ LLM决策
+                      → RagQuery("产品A特性") → 检索 → LLM融合生成
+                      ↓ 优势: 按需检索,Token高效,支持多轮对话
+      ```
+15. **调试与监控模块**
+
+    - **调试路由** ([src/mul_in_one_nemo/service/routers/debug.py](src/mul_in_one_nemo/service/routers/debug.py))
+      - 提供系统运行时状态查询接口
+      - 支持查看当前加载的Persona和会话状态
+      - 便于开发调试和问题排查
+    - **健康检查功能**:
+      - API Profile健康检查 (测试LLM连接和Embedding API)
+      - RAG服务状态监控
+      - Milvus连接状态检测
+      - 数据库连接池状态
+    - **日志增强**:
+      - 详细的操作日志记录(Persona创建/更新/删除)
+      - API调用链路追踪
+      - 错误堆栈和异常捕获
+      - 调试模式开关
+16. **RAG依赖模块** ([src/mul_in_one_nemo/service/rag_dependencies.py](src/mul_in_one_nemo/service/rag_dependencies.py:1))
 
     - 轻量级单例访问器
     - 避免循环依赖
@@ -260,10 +295,32 @@ graph LR
 6. **UI组件**:
 
    - 登录页面 ([LoginPage.vue](src/mio_frontend/mio-frontend/src/pages/LoginPage.vue:1))
+     - 用户认证和登录
+     - 租户选择
    - 会话列表页面 ([SessionsPage.vue](src/mio_frontend/mio-frontend/src/pages/SessionsPage.vue:1))
+     - 显示所有会话列表
+     - 创建新会话
+     - 会话搜索和过滤
    - Persona管理页面 ([PersonasPage.vue](src/mio_frontend/mio-frontend/src/pages/PersonasPage.vue:1))
+     - **增强输入验证**名称、系统提示词必填
+     - **知识库管理**: 支持URL/文本摄取、刷新RAG
+     - **实时健康检查**: 显示API Profile连接状态
+     - **背景信息管理**: 直接编辑Persona背景并自动同步到RAG
    - API Profile管理页面 ([ApiProfilesPage.vue](src/mio_frontend/mio-frontend/src/pages/ApiProfilesPage.vue:1))
+     - **一键健康检查**: 测试API连接状态
+     - **配置类型区分**: LLM vs Embedding配置
+     - **状态指示器**: 连接正常/异常实时显示
+     - 支持创建、编辑、测试和删除API Profile
    - 聊天对话页面 ([ChatConversationPage.vue](src/mio_frontend/mio-frontend/src/pages/ChatConversationPage.vue:1))
+     - **用户可选择激活的Persona参与对话**
+     - **实时显示Agent发言状态** (Thinking/Speaking/Cooldown)
+     - 流式消息显示
+     - 支持@提及特定Agent
+   - **调试页面** ([DebugPage.vue](src/mio_frontend/mio-frontend/src/pages/DebugPage.vue:1))
+     - 查看系统运行时状态
+     - 监控活跃会话和Persona加载情况
+     - 开发者工具和日志查看
+     - 性能指标监控
 
 ### 前端数据流动逻辑
 
@@ -310,6 +367,14 @@ graph LR
 
    - 多租户架构支持
    - 用户和资源隔离
+   - **全局配置管理**:
+     - 租户级Embedding API配置(tenant_embedding_api_profile)
+     - 统一的向量化策略管理
+     - 配额和资源限制
+   - **数据隔离**:
+     - PostgreSQL数据库按tenant_id分区
+     - Milvus Collection按Persona隔离(间接实现租户隔离)
+     - API密钥加密存储
 2. **User (用户)**:
 
    - 用户身份管理
@@ -319,12 +384,28 @@ graph LR
    - AI Agent 的人格定义
    - 包含名称、提示词、语调等属性
    - 可绑定不同的 LLM API 配置
-   - 支持背景经历字段（自动摄取到 RAG 知识库，通过向量检索增强对话）
+   - 支持背景经历字段（自动摄取到 RAG 知识库，通过RagQuery工具按需检索）
+   - **创建时自动化流程**:
+     - 解析并验证Persona配置
+     - 自动创建Milvus Collection (persona_{id}_collection)
+     - 将background字段自动切片、向量化并摄取到知识库
+     - 支持URL和文本两种知识源
+     - 支持后续追加知识摄取和RAG刷新
+   - **健康检查**: 验证绑定的API Profile连接状态和可用性
 4. **API Profile (API配置)**:
 
    - LLM API 连接配置
    - 包含基础URL、模型名称、API密钥等
    - 运行时动态解析为 Persona 提供配置
+   - **支持多种配置类型**:
+     - LLM API 配置(用于对话生成)
+     - Embedding API 配置(用于RAG向量化)
+     - 租户级全局配置(Tenant Embedding Profile)
+   - **健康检查功能**:
+     - 实时测试API连接状态
+     - 验证API密钥有效性
+     - 检查模型可用性
+   - **前端管理界面**: 支持创建、编辑、测试和删除API Profile
 5. **Session (会话)**:
 
    - 用户与 Agent 的对话会话
@@ -728,7 +809,7 @@ sequenceDiagram
     F->>U: 显示摄取成功
 ```
 
-**知识检索与工具化调用流程**:
+**知识检索与工具化调用流程** (Tool-First 设计):
 
 ```mermaid
 sequenceDiagram
@@ -742,22 +823,41 @@ sequenceDiagram
   
     U->>B: 发送对话消息
     B->>P: 调用 _build_prompts (async)
-    Note over P: 工具优先：无预注入，LLM 按需调用工具
+    Note over P: 工具优先: 无预注入,LLM 按需调用工具
     P->>L: 发送 System Prompt + 工具定义 + 历史 + 用户消息
-    L->>L: 决策：是否调用工具？
+    L->>L: 决策: 是否需要外部知识?
+  
     alt LLM 决定调用 RagQuery
-        L->>T: 调用 RagQuery(query, persona_id)
+        L->>T: function_call: RagQuery("产品A特性", persona_id, top_k=5)
         T->>R: retrieve_documents
-        R->>M: 向量相似度检索
-        M->>R: 返回 Top-K 文档
-        R->>T: 格式化文档
-        T->>L: 返回工具结果（passages）
-        L->>L: 融合工具结果到回答
+        R->>M: 向量相似度检索 (HNSW索引)
+        M->>R: 返回 Top-K 文档片段
+        R->>T: 格式化: [{"text": "...", "source": "..."}]
+        T->>L: 返回工具结果
+        L->>L: 融合检索内容到生成上下文
+    else LLM 决定调用 WebSearch
+        L->>T: function_call: WebSearch("最新AI新闻", top_k=3)
+        T->>T: DuckDuckGo HTML搜索 + 页面抓取
+        T->>L: 返回: [{"title": "...", "url": "...", "snippet": "..."}]
+        L->>L: 融合搜索结果到生成
+    else LLM 决定直接回答
+        L->>L: 基于已有知识生成回答
     end
-    L->>P: 流式返回响应
+  
+    L->>P: 流式返回响应 (token by token)
     P->>B: 返回生成结果
-    B->>U: WebSocket 推送
+    B->>U: WebSocket 推送 (实时显示)
+  
+    Note over U,L: 优势: Token高效、按需检索、支持多工具组合
 ```
+
+**Tool-First 设计优势**:
+
+1. **Token效率**: 不再预注入大量无关知识,仅在需要时精准检索
+2. **灵活性**: LLM可根据问题复杂度决定是否调用工具、调用哪个工具
+3. **可扩展性**: 易于添加新工具(如数据库查询、API调用)而不改变核心流程
+4. **可解释性**: 工具调用链路清晰,便于追踪知识来源
+5. **多轮对话支持**: LLM可在多轮对话中多次调用工具,逐步精炼答案
 
 ## 5. 核心模块设计
 
@@ -1001,8 +1101,40 @@ Mul-in-One 项目通过结合 FastAPI 的高性能后端和 Vue.js 的现代化�
 **核心成就**:
 
 - ✅ **完整的 RAG 集成**: 通过 Milvus 向量数据库和 LangChain，实现了知识库摄取、检索和生成全链路
+- ✅ **Tool-First 设计革新**:
+  - 从预注入RAG转向工具化调用,显著提升Token效率
+  - WebSearch和RagQuery工具标准化实现
+  - LLM按需决策调用,支持多工具组合
 - ✅ **数据库驱动配置**: 运行时动态解析 Persona 的 API 配置，支持多租户 SaaS 架构
 - ✅ **灵活的会话语义**: 支持无限历史窗口和回合限制，适应不同对话场景
 - ✅ **模块化架构**: 清晰的分层设计便于维护和扩展
+- ✅ **健康检查与调试**:
+  - API Profile实时连接测试
+  - 调试页面和系统状态监控
+  - 详细的操作日志和链路追踪
+- ✅ **租户级全局配置**:
+  - 租户级Embedding API配置
+  - 统一的向量化策略管理
+  - 多租户数据隔离保障
 
-通过清晰的架构设计和模块化实现，系统具有良好的可维护性和扩展性，为后续的检索质量优化、多模态支持和企业级功能提供了坚实基础。
+**近期重要更新**
+
+1. **架构优化**:
+
+   - 从传统RAG预注入转向Tool-First设计
+   - 实现WebSearch和RagQuery标准化工具
+   - 支持LLM智能决策多工具调用
+2. **功能增强**:
+
+   - 前端增加Persona创建时的输入验证
+   - API Profile健康检查一键测试
+   - 调试页面提供系统运行时状态监控
+   - 用户可选择激活的Persona参与对话
+3. **基础设施改进**:
+
+   - PostgreSQL数据库集成优化
+   - 日志系统增强(详细操作记录和错误追踪)
+   - 租户级全局Embedding配置支持
+   - 数据库迁移脚本更新(tenant_embedding_api_profile)
+
+通过清晰的架构设计和模块化实现，系统具有良好的可维护性和扩展性，为后续的检索质量优化、多模态支持和企业级功能提供了坚实基础。当前的Tool-First设计为未来集成更多外部工具(如数据库查询、API调用、代码执行等)奠定了良好架构基础。
