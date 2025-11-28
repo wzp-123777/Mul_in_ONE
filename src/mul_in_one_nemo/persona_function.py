@@ -15,6 +15,7 @@ from nat.data_models.function import FunctionBaseConfig
 
 # RAG service singleton accessor
 from mul_in_one_nemo.service.rag_dependencies import get_rag_service
+from mul_in_one_nemo.service.web_tools import web_search, web_fetch, extract_web_triggers
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +122,35 @@ async def persona_dialogue_function(config: PersonaDialogueFunctionConfig, build
             prompts.append(HumanMessage(content=f"[用户刚刚说]: {user_message}\n\n现在轮到你发言了。"))
         else:
             prompts.append(HumanMessage(content="[基于以上对话，如果你有想法就发言，如果没什么可说的就保持简短或沉默]"))
+
+        # Web: 如果出现 [[web:...]] 触发器，进行快速检索并附加简要信息
+        # 触发器可在用户消息或最近历史中出现
+        web_queries: List[str] = []
+        web_queries.extend(extract_web_triggers(user_message or ""))
+        for msg in history[-3:]:  # 仅检查最近几条
+            web_queries.extend(extract_web_triggers(str(msg.get("content", ""))))
+        if web_queries:
+            try:
+                # 仅执行第一个查询以控制时延
+                q = web_queries[0]
+                results = await web_search(q, top_k=3)
+                fetched_snippets: List[str] = []
+                for title, url in results[:2]:
+                    try:
+                        snippet = await web_fetch(url)
+                        fetched_snippets.append(f"标题：{title}\n链接：{url}\n摘要：{snippet[:800]}")
+                    except Exception:
+                        fetched_snippets.append(f"标题：{title}\n链接：{url}")
+                if results:
+                    web_note = (
+                        "【网页检索结果】\n"
+                        f"查询：{q}\n\n" + "\n\n".join(fetched_snippets)
+                        + "\n\n在回答中，仅将这些内容作为参考来源，并标注引用链接。"
+                    )
+                    prompts.append(SystemMessage(content=web_note))
+                    logger.info(f"Web search attached for query: {q} results={len(results)}")
+            except Exception as e:
+                logger.error(f"Web search failed: {e}")
 
         # RAG: 检索上下文并作为系统提示追加（放在最后，紧贴用户消息）
         if user_message and persona_id is not None:
