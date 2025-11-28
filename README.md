@@ -7,7 +7,7 @@
 
 **一个功能完整的多智能体对话系统,支持动态 Persona 管理、RAG 知识增强、实时流式对话和 Web 可视化界面。**
 
-本项目基于 NVIDIA NeMo Agent Toolkit 构建,提供了从命令行工具到 Web 应用的完整解决方案,让多个 AI Agent 能够像真人群聊一样进行自然、流畅的对话互动。
+本项目基于 NVIDIA NeMo Agent Toolkit 构建,提供了从命令行工具到 Web 应用的完整解决方案,让多个 AI Agent 能够像真人群聊一样进行自然、流畅的对话互动。系统采用“工具优先（NAT 函数调用）”设计,由 LLM 按需主动调用工具（如 WebSearch、RagQuery）,不再使用内联触发器或每轮预注入背景。
 
 ## ✨ 核心特性
 
@@ -20,7 +20,7 @@
 ### 🧠 RAG 知识增强系统
 - **全局 Embedding 配置**: 租户级别的统一 embedding 模型配置
 - **自动向量化**: 创建或更新 Persona 背景时自动分块、向量化并存储到 Milvus
-- **智能检索增强**: 对话时自动检索相关背景知识,提升回复质量和准确性
+ - **工具化按需检索**: 由 LLM 通过 `RagQuery` 工具按需检索相关背景,提升回复质量与可解释性（不再每轮预注入）
 - **手动刷新控制**: 支持主动触发背景知识的重新摄取和索引
 
 ### 💬 高级对话功能
@@ -43,8 +43,8 @@
 - **RESTful API**: 完整的 FastAPI 后端,支持 Swagger 文档
 - **数据库持久化**: PostgreSQL + Alembic 版本控制
 - **向量数据库**: Milvus 高性能向量检索
-- **命令行工具**: 无需 Web 界面的快速测试方式
 - **热重载开发**: 前后端均支持代码修改后自动重载
+- **NAT 工具优先**: 通过 NeMo Agent Toolkit 注册与发现工具,标准化 Web/RAG 能力,支持自定义工具扩展
 
 ## 🛠️ 技术栈
 
@@ -53,7 +53,7 @@
 - **ORM**: SQLAlchemy 2.0 (async)
 - **数据库**: PostgreSQL
 - **向量数据库**: Milvus
-- **对话引擎**: NVIDIA NeMo Agent Toolkit
+ - **对话引擎**: NVIDIA NeMo Agent Toolkit（函数调用 / 工具优先）
 - **LLM 集成**: LangChain, OpenAI SDK
 - **包管理**: uv
 
@@ -112,6 +112,9 @@ Mul_in_ONE/
 │       │       ├── sessions.py   # 会话 API
 │       │       └── personas.py   # Persona API
 │       ├── runtime.py            # NeMo 运行时封装
+│       ├── tools/                # NAT 工具模块
+│       │   ├── web_search_tool.py# WebSearch 工具 (公开信息检索)
+│       │   └── rag_query_tool.py # RagQuery 工具 (Persona 背景检索)
 │       ├── scheduler.py          # 对话调度器
 │       ├── memory.py             # 对话记忆管理
 │       └── cli.py                # 命令行工具
@@ -237,6 +240,42 @@ npm run dev
 4. **创建 Persona**: 添加 AI 人格,设置名称、handle、语气、背景等
 5. **开始对话**: 在 "Sessions" 页面创建新会话,选择 Target Agents 开始聊天!
 
+### 8. 工具优先（NAT）配置与行为
+- **已注册工具**: `WebSearch` 与 `RagQuery`
+- **调用方式**: LLM 在对话过程中按需通过函数调用触发工具,无需用户使用内联触发器
+- **RAG 行为变更**: 移除每轮预注入背景; 改为由 `RagQuery` 工具返回 Top-K 片段并在需要时融合到 Prompt
+- **代码位置**:
+  - `src/mul_in_one_nemo/tools/web_search_tool.py`
+  - `src/mul_in_one_nemo/tools/rag_query_tool.py`
+  - `src/mul_in_one_nemo/runtime.py`（工具注册与运行时绑定）
+- **详细设计**: 参见 [系统架构设计文档](docs/architecture.md) 的"工具模块"章节
+
+#### 工具注册示例
+
+在 `runtime.py` 中，工具通过 NAT 的 builder 注册并暴露给 LLM 函数调用接口：
+
+```python
+# src/mul_in_one_nemo/runtime.py
+from mul_in_one_nemo.tools.web_search_tool import web_search_tool
+from mul_in_one_nemo.tools.rag_query_tool import rag_query_tool
+
+class MultiAgentRuntime:
+    def __init__(self):
+        self.builder = WorkflowBuilder()
+        
+        # 注册默认 LLM
+        self.builder.set_default_llm(default_llm)
+        
+        # 注册通用工具（所有 Persona 可用）
+        self.builder.register(web_search_tool)
+        self.builder.register(rag_query_tool)
+        
+        # 注册 Persona 对话函数
+        # ...
+```
+
+这样 LLM 在推理时可以自动发现并调用 `web_search` 和 `rag_query` 函数。
+
 ## 💡 使用指南
 
 ### Web 界面功能
@@ -288,19 +327,6 @@ npm run dev
 - **日志类型**: Milvus 操作、数据库事务、RAG 摄取等
 - **自动刷新**: 每 2 秒自动更新
 - **行数控制**: 选择显示最近 200/500/1000/2000 行
-
-### 命令行工具 (CLI)
-
-```bash
-# 交互式对话 (流式输出)
-uv run mul-in-one-nemo --stream
-
-# 单次对话测试
-uv run mul-in-one-nemo --message "你好,大家！"
-
-# 查看帮助
-uv run mul-in-one-nemo --help
-```
 
 ### API 使用示例
 
@@ -421,7 +447,7 @@ docker logs milvus-standalone
 - 检查 DEBUG 页面日志查看详细错误
 - 确认已配置全局 Embedding 模型
 - 验证 Embedding API Profile 的模型支持 embedding 功能
-- 检查 Milvus 内存使用情况
+- 检查 Milvus 内存使用情况 
 
 **4. Agent 不按预期发言**
 - 检查 Target Agents 是否正确选择
@@ -446,6 +472,7 @@ docker logs milvus-standalone
 - ✅ 用户 Persona 角色扮演支持
 - ✅ 多轮连续对话
 - ✅ 对话记忆管理
+ - ✅ NAT 工具优先（WebSearch、RagQuery 已注册并在运行时可发现）
 
 #### RAG 知识增强
 - ✅ 租户级全局 Embedding 配置
@@ -454,6 +481,7 @@ docker logs milvus-standalone
 - ✅ 文本分块和 chunk 管理
 - ✅ 手动刷新背景知识
 - ✅ 增删改 Persona 自动同步向量库
+ - ✅ 工具化按需检索（移除每轮预注入,由 `RagQuery` 触发）
 
 #### 数据持久化
 - ✅ PostgreSQL 异步 ORM
@@ -474,11 +502,11 @@ docker logs milvus-standalone
 
 #### 开发者工具
 - ✅ FastAPI Swagger 文档
-- ✅ 命令行工具 (CLI)
 - ✅ 热重载开发模式
 - ✅ 单元测试和集成测试
 - ✅ Docker 支持 (Milvus)
 - ✅ 辅助脚本集合
+ - ✅ NAT 工具注册与运行时绑定
 
 ### 🚧 进行中 / 计划中
 
@@ -489,6 +517,11 @@ docker logs milvus-standalone
   - 压入比例可配置(如压入最早的 1/2、1/3 或自定义比例的历史对话)
   - Session-RAG 检索优先级最低(低于 Persona 背景 RAG)
   - 实现对话历史的长期保存和智能召回,突破 memory_window 限制
+- [ ] **可选的技术视图 (Tool Call Tracing)**
+  - 为消息添加可选的"来源详情"展示
+  - 支持查看工具调用记录(如 RagQuery 检索来源、WebSearch 链接)
+  - 提供"角色扮演模式"与"审计模式"切换,前者隐藏技术细节保持沉浸感
+  - 开发场景下支持完整的工具调用链路追踪
 - [ ] 消息反馈系统完善(点赞/点踩统计)
 - [ ] 对话导出功能(Markdown/JSON)
 - [ ] Persona 背景支持 URL 摄取

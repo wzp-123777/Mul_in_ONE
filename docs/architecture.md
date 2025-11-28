@@ -51,7 +51,7 @@ Mio（Mul-in-One）是一个 Persona 驱动、RAG 增强、可观测编排的多
 - **数据库**: PostgreSQL (主要), SQLite (测试)
 - **ORM**: SQLAlchemy (异步)
 - **数据库迁移**: Alembic
-- **对话引擎**: NVIDIA NeMo Agent Toolkit
+- **对话引擎**: NVIDIA NeMo Agent Toolkit（工具优先、函数调用）
 - **RAG 集成**: LangChain, OpenAIEmbeddings, OpenAI
 - **向量数据库**: Milvus
 - **包管理**: uv
@@ -141,11 +141,11 @@ graph TD
    - FastAPI 依赖注入配置
    - 单例模式实现
    - 服务实例管理
-9. **运行时模块** ([src/mul_in_one_nemo/runtime.py](src/mul_in_one_nemo/runtime.py:19))
-
+   9. **运行时模块** ([src/mul_in_one_nemo/runtime.py](src/mul_in_one_nemo/runtime.py:19))
+   
    - 与 NVIDIA NeMo Agent Toolkit 集成
    - 多智能体运行时环境
-   - Persona 函数注册
+   - 注册 Persona 函数与通用工具（WebSearch、RagQuery）
 10. **调度器模块** ([src/mul_in_one_nemo/scheduler.py](src/mul_in_one_nemo/scheduler.py:19))
 
     - 多智能体对话调度
@@ -168,7 +168,11 @@ graph TD
 
     - 知识库摄取（URL/文本）
     - Milvus 向量存储集成
-    - 文档检索与上下文注入
+   - 文档检索（供工具和对话函数调用）
+   16. **工具模块**
+      - **WebSearch 工具** ([src/mul_in_one_nemo/tools/web_search_tool.py](src/mul_in_one_nemo/tools/web_search_tool.py))：检索最新公开信息并返回标题、链接、摘要
+      - **RagQuery 工具** ([src/mul_in_one_nemo/tools/rag_query_tool.py](src/mul_in_one_nemo/tools/rag_query_tool.py))：查询 Persona 背景片段用于回答引用
+
     - LangChain 集成（Embeddings, LLM）
     - 数据库配置动态解析
 15. **RAG依赖模块** ([src/mul_in_one_nemo/service/rag_dependencies.py](src/mul_in_one_nemo/service/rag_dependencies.py:1))
@@ -716,7 +720,7 @@ sequenceDiagram
     F->>U: 显示摄取成功
 ```
 
-**知识检索与注入流程**:
+**知识检索与工具化调用流程**:
 
 ```mermaid
 sequenceDiagram
@@ -729,7 +733,8 @@ sequenceDiagram
   
     U->>B: 发送对话消息
     B->>P: 调用 _build_prompts (async)
-    P->>R: retrieve_documents(query, persona_id)
+   Note over P: 工具优先：不再每轮预注入，按需调用工具
+   P->>R: retrieve_documents(query, persona_id)（或通过 RagQuery 工具调用）
     R->>M: 向量相似度检索
     M->>R: 返回 Top-K 文档
     R->>P: 格式化文档为上下文

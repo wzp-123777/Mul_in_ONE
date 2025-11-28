@@ -121,27 +121,8 @@ async def persona_dialogue_function(config: PersonaDialogueFunctionConfig, build
         if config.instructions:
             prompts.append(SystemMessage(content=f"额外指示：{config.instructions}"))
 
-        # 优先级：系统提示 > RAG 背景 > 历史 > 用户消息
-        # 将 RAG 背景前置到历史之前，以提高对话中的引用优先级
-        rag_background_appended = False
-        if user_message and persona_id is not None:
-            try:
-                rag_service = get_rag_service()
-                docs = await rag_service.retrieve_documents(user_message, persona_id, top_k=4)
-                if docs:
-                    rag_background_appended = True
-                    logger.info(f"RAG retrieved {len(docs)} documents for persona {persona_id}")
-                    context_text = "\n\n".join(d.page_content for d in docs)
-                    rag_note = (
-                        "【人物背景（高优先级）】\n"
-                        f"{context_text}\n\n"
-                        "请优先依据以上背景信息作答；如需更多资料，可调用 RagQuery 工具以获取补充片段。"
-                    )
-                    prompts.append(SystemMessage(content=rag_note))
-                else:
-                    logger.info(f"RAG returned no documents for persona {persona_id}")
-            except Exception as e:
-                logger.error(f"RAG retrieval failed for persona {persona_id}: {e}", exc_info=True)
+        # 消息优先级：系统提示 > 历史 > 用户消息
+        # RAG 背景已不再每轮预注入，改为由 LLM 通过 RagQuery 工具按需检索
 
         for message in history[-config.memory_window:]:
             speaker = message.get("speaker", "unknown")
