@@ -15,7 +15,6 @@ from nat.data_models.function import FunctionBaseConfig
 
 # RAG service singleton accessor
 from mul_in_one_nemo.service.rag_dependencies import get_rag_service
-from mul_in_one_nemo.service.web_tools import web_search, web_fetch, extract_web_triggers
 
 logger = logging.getLogger(__name__)
 
@@ -106,20 +105,13 @@ async def persona_dialogue_function(config: PersonaDialogueFunctionConfig, build
 2. 只基于已有的对话历史回复，不要假设或编造对话中未出现的内容。
 3. 如果用户只是简单问候，简短回应即可，不要过度延伸。
 
-【何时使用网页检索（[[web:...]]）】
-当你需要确认最新信息或不确定事实时，请在消息中加入一个网页检索触发器，格式为：[[web:你的查询词]]。使用场景包括但不限于：
- - 需要核实最新数据、新闻、版本或价格（例如模型发布、框架版本、赛事结果）。
+【网页检索使用说明】
+当你需要确认最新信息或不确定事实时，请调用系统提供的“WebSearch”工具（由系统自动按需触发）。
+使用场景包括但不限于：
+ - 需要核实最新数据、新闻、版本或价格。
  - 对具体事实不确定（时间、数字、名单、作者、出处）。
  - 用户明确要求“查一下/检索/上网搜/给来源链接”。
- - 你需要引用权威来源支持观点。
-
-使用建议：
- - 查询词要具体，例如：[[web:DeepSeek v3.1 与 Qwen Next 80B 模型对比 2025 年]]。
- - 一个回合至多触发一次检索，避免拖慢对话。
- - 在回答中简要引用检索到的链接，并明确哪些是从网页检索得到的结论。
-
-示例：
- - 用户：今年 11 月有哪些重要 AI 模型更新？\n你：[[web:2025 年 11 月 AI 模型 更新 发布]] 简述你知道的更新，并附上 1-2 条来源链接。
+在回答中简要引用返回的链接，并明确哪些结论来自工具检索。
 
 记住：这是群聊，要像真人一样自然互动！"""
 
@@ -138,34 +130,7 @@ async def persona_dialogue_function(config: PersonaDialogueFunctionConfig, build
         else:
             prompts.append(HumanMessage(content="[基于以上对话，如果你有想法就发言，如果没什么可说的就保持简短或沉默]"))
 
-        # Web: 如果出现 [[web:...]] 触发器，进行快速检索并附加简要信息
-        # 触发器可在用户消息或最近历史中出现
-        web_queries: List[str] = []
-        web_queries.extend(extract_web_triggers(user_message or ""))
-        for msg in history[-3:]:  # 仅检查最近几条
-            web_queries.extend(extract_web_triggers(str(msg.get("content", ""))))
-        if web_queries:
-            try:
-                # 仅执行第一个查询以控制时延
-                q = web_queries[0]
-                results = await web_search(q, top_k=3)
-                fetched_snippets: List[str] = []
-                for title, url in results[:2]:
-                    try:
-                        snippet = await web_fetch(url)
-                        fetched_snippets.append(f"标题：{title}\n链接：{url}\n摘要：{snippet[:800]}")
-                    except Exception:
-                        fetched_snippets.append(f"标题：{title}\n链接：{url}")
-                if results:
-                    web_note = (
-                        "【网页检索结果】\n"
-                        f"查询：{q}\n\n" + "\n\n".join(fetched_snippets)
-                        + "\n\n在回答中，仅将这些内容作为参考来源，并标注引用链接。"
-                    )
-                    prompts.append(SystemMessage(content=web_note))
-                    logger.info(f"Web search attached for query: {q} results={len(results)}")
-            except Exception as e:
-                logger.error(f"Web search failed: {e}")
+        # 已移除基于 [[web:...]] 的网页检索触发器；改为通过 NAT 工具调用实现正规检索。
 
         # RAG: 检索上下文并作为系统提示追加（放在最后，紧贴用户消息）
         if user_message and persona_id is not None:
