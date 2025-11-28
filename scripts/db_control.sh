@@ -38,6 +38,13 @@ function start_postgres {
         echo "unix_socket_directories = '$POSTGRES_RUN_DIR'" >> "$POSTGRES_DATA/postgresql.conf"
         
         echo "PostgreSQL cluster initialized at $POSTGRES_DATA"
+    else
+        # Ensure socket directory configuration exists for existing installations
+        if ! grep -q "^unix_socket_directories" "$POSTGRES_DATA/postgresql.conf"; then
+            echo "Updating postgresql.conf with socket directory..."
+            # Comment out the default setting and add our custom one
+            sed -i.bak "s|^#unix_socket_directories.*|unix_socket_directories = '$POSTGRES_RUN_DIR'|" "$POSTGRES_DATA/postgresql.conf"
+        fi
     fi
     
     # Ensure run directory exists
@@ -45,11 +52,14 @@ function start_postgres {
 
     if pg_ctl -D "$POSTGRES_DATA" status >/dev/null 2>&1; then
         echo "PostgreSQL already running for data directory $POSTGRES_DATA"
-    else
-        echo "Starting PostgreSQL server..."
-        pg_ctl -D "$POSTGRES_DATA" -l "$LOG_FILE" start
-        echo "PostgreSQL started (log: $LOG_FILE)"
+        echo "Stopping existing server to apply configuration changes..."
+        pg_ctl -D "$POSTGRES_DATA" stop -m fast
+        sleep 2
     fi
+    
+    echo "Starting PostgreSQL server..."
+    pg_ctl -D "$POSTGRES_DATA" -l "$LOG_FILE" -o "-k $POSTGRES_RUN_DIR" start
+    echo "PostgreSQL started (log: $LOG_FILE)"
 
     echo "Waiting for PostgreSQL to be fully ready..."
     local max_retries=10

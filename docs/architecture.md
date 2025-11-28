@@ -1034,35 +1034,76 @@ sequenceDiagram
 
 ### 7.1 开发环境
 
-1. **Nix环境管理** ([flake.nix](flake.nix:1))
+1. **环境管理**:
+   - **Nix** ([flake.nix](flake.nix:1)): 统一开发环境配置
+   - **uv**: Python 依赖管理和虚拟环境
+   - 所有路径均为项目相对路径,支持跨机器迁移
 
-   - 统一开发环境配置
-   - 自动安装依赖项
-2. **数据库管理**:
+2. **数据存储本地化**:
+   - **PostgreSQL**: 数据存储在 `.postgresql/` 目录
+     - 数据目录: `.postgresql/data`
+     - Socket目录: `.postgresql/run`
+     - 日志文件: `.postgresql/data/postgres.log`
+   - **Milvus**: 向量数据存储在 `.milvus/` 目录
+   - **日志**: 应用日志存储在 `logs/` 目录
 
-   - 本地 PostgreSQL 实例
-   - 数据库迁移脚本 ([alembic/](alembic/env.py:1))
+3. **控制脚本**:
+   - `scripts/db_control.sh`: PostgreSQL 生命周期管理
+   - `scripts/milvus_control.sh`: Milvus 容器管理
+   - `scripts/start_backend.sh`: 后端服务启动
+   - `scripts/bootstrap_toolkit.sh`: 环境初始化
+
+4. **数据库迁移**:
+   - Alembic 版本控制 ([alembic/](alembic/env.py:1))
+   - 自动迁移脚本集成在 `db_control.sh start` 中
 
 ### 7.2 生产环境
 
-1. **后端服务**:
+1. **容器化部署** (推荐):
+   ```bash
+   # 使用 Docker Compose 部署完整栈
+   docker-compose up -d
+   ```
+   - 后端: FastAPI + Uvicorn (异步 ASGI 服务器)
+   - 数据库: PostgreSQL 容器
+   - 向量数据库: Milvus 容器
+   - 前端: Nginx 静态文件服务
 
-   - FastAPI 应用
-   - ASGI 服务器 (如 uvicorn)
-   - 数据库连接池
-2. **前端应用**:
+2. **传统部署**:
+   - **后端服务**:
+     - 使用 systemd 或 supervisor 管理进程
+     - 反向代理 (Nginx/Caddy) 处理 HTTPS
+     - 数据库连接池配置
+   - **前端应用**:
+     - 构建静态文件: `npm run build`
+     - Web 服务器: Nginx/Apache
+   - **数据库**:
+     - 托管 PostgreSQL 服务 (如 AWS RDS, Supabase)
+     - 或自建 PostgreSQL 集群
+   - **向量数据库**:
+     - Milvus 容器化部署
+     - 持久化卷挂载
+     - 集合备份与恢复策略
 
-   - 构建后的静态文件
-   - Web 服务器 (如 nginx)
-3. **数据库**:
+3. **环境变量配置**:
+   ```bash
+   # 数据库连接
+   DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/dbname
+   
+   # Milvus 连接
+   MILVUS_HOST=localhost
+   MILVUS_PORT=19530
+   
+   # 应用配置
+   APP_ENV=production
+   LOG_LEVEL=INFO
+   ```
 
-   - PostgreSQL 数据库
-   - 定期备份策略
-4. **向量数据库**:
-
-   - Milvus 实例（推荐 Docker 部署）
-   - 持久化存储配置
-   - 集合备份与恢复策略
+4. **可移植性设计**:
+   - 所有配置使用环境变量或配置文件
+   - 数据存储路径可配置
+   - 支持从开发环境平滑迁移到生产环境
+   - 避免硬编码绝对路径
 
 ## 8. 安全考虑
 

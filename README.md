@@ -163,35 +163,56 @@ source .venv/bin/activate  # Windows: .venv\Scripts\activate
 
 #### 3. 配置数据库
 
-```bash
-# 启动 PostgreSQL
-./scripts/db_control.sh start
+**项目内置PostgreSQL管理**:
 
-# 运行数据库迁移
-alembic upgrade head
+```bash
+# 启动项目内置 PostgreSQL (数据存储在项目 .postgresql 目录)
+./scripts/db_control.sh start
 ```
 
-**数据库配置**: 默认使用 `postgresql+asyncpg://postgres:postgres@localhost:5432/mul_in_one`
+脚本会自动:
+- 初始化 PostgreSQL 数据目录 (`.postgresql/data`)
+- 创建 Unix socket 目录 (`.postgresql/run`)
+- 创建数据库 `mul_in_one`
+- 运行 Alembic 数据库迁移
 
-可通过环境变量 `DATABASE_URL` 自定义:
+**使用外部PostgreSQL**:
+
+如果您已有PostgreSQL实例,可通过环境变量配置:
 
 ```bash
 export DATABASE_URL="postgresql+asyncpg://user:password@host:port/dbname"
 ```
 
+**数据库位置说明**:
+- 项目内置方式: 所有数据存储在项目的 `.postgresql/` 目录下
+- 可移植性: 整个项目目录可以迁移到不同机器,无需重新配置
+- Unix Socket: 使用项目相对路径,避免权限和路径问题
+
 #### 4. 启动 Milvus
 
-```bash
-# 使用 Docker 启动 Milvus
-./scripts/milvus_control.sh start
+**使用项目脚本** (推荐):
 
-# 或手动启动
+```bash
+# 使用项目控制脚本启动 Milvus
+./scripts/milvus_control.sh start
+```
+
+**手动启动**:
+
+```bash
+# 数据会存储在项目的 .milvus 目录
 docker run -d --name milvus-standalone \
   -p 19530:19530 -p 9091:9091 \
   -e ETCD_USE_EMBED=true \
   -v $(pwd)/.milvus:/var/lib/milvus \
   milvusdb/milvus:latest
 ```
+
+**数据持久化**: 
+- Milvus 数据存储在项目的 `.milvus/` 目录
+- 向量索引和集合数据完全本地化
+- 支持项目整体迁移
 
 #### 5. 启动后端服务
 
