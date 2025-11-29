@@ -52,6 +52,7 @@ class MultiAgentRuntime:
                     persona_prompt=persona.prompt,
                     instructions=f"语气：{persona.tone}",
                     memory_window=self.settings.memory_window,
+                    tool_names=["web_search_tool", "rag_query_tool"],
                 ),
             )
             self.functions[persona.name] = fn

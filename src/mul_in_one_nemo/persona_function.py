@@ -4,7 +4,8 @@ import logging
 from typing import Any, Dict, List, Optional, AsyncGenerator
 
 from pydantic import BaseModel, Field
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage, BaseMessage
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 from nat.builder.builder import Builder
 from nat.builder.framework_enum import LLMFrameworkEnum
@@ -12,6 +13,9 @@ from nat.builder.function_info import FunctionInfo
 from nat.cli.register_workflow import register_function
 from nat.data_models.component_ref import LLMRef
 from nat.data_models.function import FunctionBaseConfig
+
+# Import Tool Calling Agent components
+from nat.agent.tool_calling_agent.agent import ToolCallAgentGraph, ToolCallAgentGraphState
 
 # RAG service singleton accessor
 from mul_in_one_nemo.service.rag_dependencies import get_rag_service
@@ -38,13 +42,35 @@ class PersonaDialogueFunctionConfig(FunctionBaseConfig, name="mul_in_one_persona
     persona_prompt: str = Field(default="You are an AI persona.")
     instructions: Optional[str] = Field(default=None)
     memory_window: int = Field(default=8)
+    tool_names: List[str] = Field(default_factory=list, description="List of tools available to the persona")
 
 
 @register_function(config_type=PersonaDialogueFunctionConfig, framework_wrappers=[LLMFrameworkEnum.LANGCHAIN])
 async def persona_dialogue_function(config: PersonaDialogueFunctionConfig, builder: Builder):
     llm = await builder.get_llm(config.llm_name, wrapper_type=LLMFrameworkEnum.LANGCHAIN)
+    
+    # Retrieve and bind tools if any are specified
+    tools = []
+    if config.tool_names:
+        tools = await builder.get_tools(tool_names=config.tool_names, wrapper_type=LLMFrameworkEnum.LANGCHAIN)
+    
+    # Create a simple pass-through prompt for the agent graph
+    # The actual system prompt and history will be passed in the state
+    agent_prompt = ChatPromptTemplate.from_messages([
+        MessagesPlaceholder(variable_name="messages"),
+    ])
 
-    async def _build_prompts(input_data: PersonaDialogueInput) -> List[HumanMessage | SystemMessage]:
+    # Build the agent graph
+    # We set detailed_logs to True to help debugging, or False for production
+    graph_builder = ToolCallAgentGraph(
+        llm=llm,
+        tools=tools,
+        prompt=agent_prompt,
+        handle_tool_errors=True,
+    )
+    graph = await graph_builder.build_graph()
+
+    async def _build_messages(input_data: PersonaDialogueInput) -> List[BaseMessage]:
         history = input_data.history
         user_message = input_data.user_message
         persona_id = input_data.persona_id
@@ -60,7 +86,7 @@ async def persona_dialogue_function(config: PersonaDialogueFunctionConfig, build
 
 """
 
-        system_prompt = f"""你是{config.persona_name}。{config.persona_prompt}
+        system_prompt_content = f"""你是{config.persona_name}。{config.persona_prompt}
 
 你正在参与一个多人自由对话。请注意：
 
@@ -116,28 +142,23 @@ async def persona_dialogue_function(config: PersonaDialogueFunctionConfig, build
 
 记住：这是群聊，要像真人一样自然互动！"""
 
-        prompts: List[HumanMessage | SystemMessage] = [SystemMessage(content=system_prompt)]
+        messages: List[BaseMessage] = [SystemMessage(content=system_prompt_content)]
 
         if config.instructions:
-            prompts.append(SystemMessage(content=f"额外指示：{config.instructions}"))
+            messages.append(SystemMessage(content=f"额外指示：{config.instructions}"))
 
         # 消息优先级：系统提示 > 历史 > 用户消息
-        # RAG 背景已不再每轮预注入，改为由 LLM 通过 RagQuery 工具按需检索
-
         for message in history[-config.memory_window:]:
             speaker = message.get("speaker", "unknown")
             content = message.get("content", "")
-            prompts.append(HumanMessage(content=f"{speaker}: {content}"))
+            messages.append(HumanMessage(content=f"{speaker}: {content}"))
 
         if user_message:
-            prompts.append(HumanMessage(content=f"[用户刚刚说]: {user_message}\n\n现在轮到你发言了。"))
+            messages.append(HumanMessage(content=f"[用户刚刚说]: {user_message}\n\n现在轮到你发言了。"))
         else:
-            prompts.append(HumanMessage(content="[基于以上对话，如果你有想法就发言，如果没什么可说的就保持简短或沉默]"))
+            messages.append(HumanMessage(content="[基于以上对话，如果你有想法就发言，如果没什么可说的就保持简短或沉默]"))
 
-        # 已移除基于 [[web:...]] 的网页检索触发器；改为通过 NAT 工具调用实现正规检索。
-
-
-        return prompts
+        return messages
 
     def _extract_text(message: Any) -> str:
         content = getattr(message, "content", message)
@@ -154,12 +175,18 @@ async def persona_dialogue_function(config: PersonaDialogueFunctionConfig, build
         return str(message)
 
     async def _respond_single(input_data: PersonaDialogueInput) -> PersonaDialogueOutput:
-        prompts = await _build_prompts(input_data)
+        messages = await _build_messages(input_data)
+        state = ToolCallAgentGraphState(messages=messages)
+        
         try:
-            response = await llm.ainvoke(prompts)
-            return PersonaDialogueOutput(response=_extract_text(response))
+            # Invoke the agent graph
+            result_state = await graph.ainvoke(state)
+            # Extract the final message from the state
+            last_message = result_state['messages'][-1]
+            return PersonaDialogueOutput(response=_extract_text(last_message))
         except Exception as e:
             error_msg = str(e)
+            logger.error(f"Error in persona dialogue: {error_msg}")
             # 检查是否为余额不足或 API 不可用错误
             if "balance is insufficient" in error_msg or "30001" in error_msg:
                 return PersonaDialogueOutput(response="[系统提示] API 账户余额不足，请充值后再试。")
@@ -171,16 +198,38 @@ async def persona_dialogue_function(config: PersonaDialogueFunctionConfig, build
                 return PersonaDialogueOutput(response=f"[系统提示] API 调用失败，请检查 API 可用性与配置：{error_msg}")
 
     async def _respond_stream(input_data: PersonaDialogueInput) -> AsyncGenerator[PersonaDialogueOutput, None]:
-        prompts = await _build_prompts(input_data)
+        messages = await _build_messages(input_data)
+        state = ToolCallAgentGraphState(messages=messages)
 
         try:
-            async for chunk in llm.astream(prompts):
-                text = _extract_text(chunk)
-                if text:
-                    yield PersonaDialogueOutput(response=text)
+            # Stream the agent graph
+            # Note: graph.astream yields state updates or events. 
+            # We want to stream the final answer tokens.
+            # LangGraph streaming is complex. 
+            # For simplicity in this prototype, if tools are used, true streaming of the *final* answer might be tricky 
+            # without specifically filtering for the final LLM node's output tokens.
+            # NeMo Agent Toolkit's ToolCallAgentGraph might not expose token-level streaming easily via astream(state).
+            # However, let's try to fallback to _respond_single if streaming fails or just return the final text.
+            
+            # Actually, let's check if we can stream the final response. 
+            # If we use astream_events, we might get tokens.
+            # For now, to ensure it works, we might sacrifice streaming for tool use correctness 
+            # OR try to stream but be aware it might just yield the final state.
+            
+            # Let's try astream and see what we get.
+            # If it yields state, we can't "stream" text token by token easily to the frontend unless we use `stream_mode="messages"`.
+            
+            # If we can't stream properly with tools, we might just await the full response and yield it as one chunk.
+            # This is safer to fix the "no response" bug first.
+            
+            result_state = await graph.ainvoke(state)
+            last_message = result_state['messages'][-1]
+            text = _extract_text(last_message)
+            if text:
+                yield PersonaDialogueOutput(response=text)
+
         except Exception as e:
             error_msg = str(e)
-            # 检查是否为余额不足或 API 不可用错误
             if "balance is insufficient" in error_msg or "30001" in error_msg:
                 yield PersonaDialogueOutput(response="[系统提示] API 账户余额不足，请充值后再试。")
             elif "401" in error_msg or "authentication" in error_msg.lower():
@@ -190,7 +239,7 @@ async def persona_dialogue_function(config: PersonaDialogueFunctionConfig, build
             else:
                 yield PersonaDialogueOutput(response=f"[系统提示] API 调用失败，请检查 API 可用性与配置：{error_msg}")
 
-    yield FunctionInfo.create(
+    return FunctionInfo.create(
         single_fn=_respond_single,
         stream_fn=_respond_stream,
         input_schema=PersonaDialogueInput,

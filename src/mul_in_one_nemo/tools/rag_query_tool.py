@@ -55,7 +55,7 @@ async def rag_query_tool(config: RagQueryToolConfig, builder):
     async def _stream(input_data: RagQueryInput) -> AsyncGenerator[RagQueryOutput, None]:
         yield await _single(input_data)
 
-    yield FunctionInfo.create(
+    return FunctionInfo.create(
         single_fn=_single,
         stream_fn=_stream,
         input_schema=RagQueryInput,

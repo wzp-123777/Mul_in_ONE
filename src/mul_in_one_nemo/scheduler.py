@@ -130,6 +130,11 @@ class TurnScheduler:
                 elif len(chosen) < self.max_agents and score >= threshold + 0.1 * len(chosen):
                     chosen.append(name)
         
+        # 若无人入选且这是用户新消息，至少选出一名发言者（得分最高者）
+        if not chosen and is_user_message and candidates:
+            top_name, _ = candidates[0]
+            chosen = [top_name]
+
         # 更新状态
         for persona in self.personas.values():
             if persona.name in chosen:
