@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import re
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from dataclasses import replace
@@ -52,6 +53,11 @@ class StubRuntimeAdapter(RuntimeAdapter):
 
 class NemoRuntimeAdapter(RuntimeAdapter):
     """Runtime adapter that drives the real MultiAgentRuntime."""
+    
+    # Regex pattern to filter out special tokens from LLM output
+    # Matches patterns like: <|pad|>, <|eos|>, <｜▁pad▁｜>, etc.
+    # Common in Qwen models and other tokenizers
+    _SPECIAL_TOKEN_PATTERN = re.compile(r'<[|｜][^|｜]*[|｜]>')
 
     def __init__(
         self,
@@ -68,6 +74,21 @@ class NemoRuntimeAdapter(RuntimeAdapter):
         self._runtimes: Dict[str, MultiAgentRuntime] = {}
         self._persona_cache: Dict[str, PersonaSettings] = {}
         self._locks: Dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+
+    @classmethod
+    def _filter_special_tokens(cls, text: str) -> str:
+        """Remove special tokens from LLM output.
+        
+        This filters out tokenizer artifacts like <|pad|>, <|eos|>, <｜▁pad▁｜>
+        that some models (e.g., Qwen) may accidentally output in their responses.
+        
+        Args:
+            text: Raw text from LLM that may contain special tokens
+            
+        Returns:
+            Cleaned text with special tokens removed
+        """
+        return cls._SPECIAL_TOKEN_PATTERN.sub('', text)
 
     @staticmethod
     def _build_scheduler(personas: list[Persona], max_agents: int) -> TurnScheduler:
@@ -276,8 +297,11 @@ class NemoRuntimeAdapter(RuntimeAdapter):
                                 text_chunk = getattr(chunk, "response")
 
                             if text_chunk:
-                                yield {"event": "agent.chunk", "data": {"content": text_chunk}}
-                                full_reply += text_chunk
+                                # Filter out special tokens that some LLMs (e.g., Qwen) may output
+                                text_chunk = self._filter_special_tokens(text_chunk)
+                                if text_chunk:  # Only yield if there's content after filtering
+                                    yield {"event": "agent.chunk", "data": {"content": text_chunk}}
+                                    full_reply += text_chunk
                         logger.info(f"Finished streaming from {persona_name}, reply length: {len(full_reply)}")
                     except Exception as e:
                         logger.error(f"Exception during runtime.invoke_stream for {persona_name}: {e}", exc_info=True)

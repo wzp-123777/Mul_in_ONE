@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, AsyncGenerator
 
 from pydantic import BaseModel, Field
 from langchain_core.messages import HumanMessage, SystemMessage, BaseMessage
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+
 
 from nat.builder.builder import Builder
 from nat.builder.framework_enum import LLMFrameworkEnum
@@ -54,11 +54,9 @@ async def persona_dialogue_function(config: PersonaDialogueFunctionConfig, build
     if config.tool_names:
         tools = await builder.get_tools(tool_names=config.tool_names, wrapper_type=LLMFrameworkEnum.LANGCHAIN)
     
-    # Create a simple pass-through prompt for the agent graph
-    # The actual system prompt and history will be passed in the state
-    agent_prompt = ChatPromptTemplate.from_messages([
-        MessagesPlaceholder(variable_name="messages"),
-    ])
+    # Create a simple textual prompt the ToolCallAgentGraph expects.
+    # Conversation state (system prompt/history) is provided via ToolCallAgentGraphState.
+    agent_prompt = "Respond based on the accumulated messages state."
 
     # Build the agent graph
     # We set detailed_logs to True to help debugging, or False for production
@@ -239,11 +237,15 @@ async def persona_dialogue_function(config: PersonaDialogueFunctionConfig, build
             else:
                 yield PersonaDialogueOutput(response=f"[系统提示] API 调用失败，请检查 API 可用性与配置：{error_msg}")
 
-    return FunctionInfo.create(
-        single_fn=_respond_single,
-        stream_fn=_respond_stream,
-        input_schema=PersonaDialogueInput,
-        single_output_schema=PersonaDialogueOutput,
-        stream_output_schema=PersonaDialogueOutput,
-        description=f"Persona responder for {config.persona_name}"
-    )
+    try:
+        yield FunctionInfo.create(
+            single_fn=_respond_single,
+            stream_fn=_respond_stream,
+            input_schema=PersonaDialogueInput,
+            single_output_schema=PersonaDialogueOutput,
+            stream_output_schema=PersonaDialogueOutput,
+            description=f"Persona responder for {config.persona_name}"
+        )
+    finally:
+        # Graph/builders are owned by the NAT runtime; nothing additional to clean up here.
+        pass

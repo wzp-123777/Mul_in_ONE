@@ -45,6 +45,21 @@
             <q-input v-model="newProfile.api_key" label="API Key" type="password" :rules="[val => !!val || 'Field is required']" />
             <q-input v-model.number="newProfile.temperature" type="number" label="Temperature" step="0.1" min="0" max="2" />
             
+            <q-separator />
+            <div class="text-subtitle2 text-grey-7">Embedding Model Configuration</div>
+            <q-checkbox v-model="newProfile.is_embedding_model" label="支持 Embedding 模型" />
+            <q-input 
+              v-model.number="newProfile.embedding_dim" 
+              type="number" 
+              label="最大 Embedding 维度" 
+              hint="模型支持的最大输出维度。例如：4096（Qwen3-Embedding-8B），1536（OpenAI text-embedding-3-small）"
+              :disable="!newProfile.is_embedding_model"
+              :rules="[val => !newProfile.is_embedding_model || (val && val >= 32 && val <= 8192) || '维度范围：32-8192']"
+            />
+            <div v-if="newProfile.is_embedding_model" class="text-caption text-grey-6 q-mt-sm">
+              💡 实际使用时可以指定更小的维度以节省存储空间（如 32-{{ newProfile.embedding_dim || 4096 }}）
+            </div>
+            
             <div align="right">
               <q-btn flat label="Cancel" color="primary" v-close-popup />
               <q-btn flat label="Create" type="submit" color="primary" :loading="creating" />
@@ -67,6 +82,21 @@
             <q-input v-model="editProfile.model" label="Model" :rules="[val => !!val || 'Field is required']" />
             <q-input v-model.number="editProfile.temperature" type="number" label="Temperature" step="0.1" min="0" max="2" />
             <q-input v-model="editProfile.api_key" label="API Key (leave blank to keep)" type="password" />
+
+            <q-separator />
+            <div class="text-subtitle2 text-grey-7">Embedding Model Configuration</div>
+            <q-checkbox v-model="editProfile.is_embedding_model" label="支持 Embedding 模型" />
+            <q-input 
+              v-model.number="editProfile.embedding_dim" 
+              type="number" 
+              label="最大 Embedding 维度" 
+              hint="模型支持的最大输出维度。例如：4096（Qwen3-Embedding-8B），1536（OpenAI text-embedding-3-small）"
+              :disable="!editProfile.is_embedding_model"
+              :rules="[val => !editProfile.is_embedding_model || (val && val >= 32 && val <= 8192) || '维度范围：32-8192']"
+            />
+            <div v-if="editProfile.is_embedding_model" class="text-caption text-grey-6 q-mt-sm">
+              💡 实际使用时可以指定更小的维度以节省存储空间（如 32-{{ editProfile.embedding_dim || 4096 }}）
+            </div>
 
             <div align="right">
               <q-btn flat label="Cancel" color="primary" v-close-popup />
@@ -116,7 +146,9 @@ const newProfile = reactive({
   base_url: '',
   model: '',
   api_key: '',
-  temperature: 0.7
+  temperature: 0.7,
+  is_embedding_model: false,
+  embedding_dim: null as number | null
 })
 
 const editProfile = reactive({
@@ -125,7 +157,9 @@ const editProfile = reactive({
   base_url: '',
   model: '',
   temperature: 0.7,
-  api_key: ''
+  api_key: '',
+  is_embedding_model: false,
+  embedding_dim: null as number | null
 })
 
 const columns = [
@@ -161,6 +195,8 @@ const openEditDialog = (profile: APIProfile) => {
   editProfile.model = profile.model
   editProfile.temperature = profile.temperature ?? 0.7
   editProfile.api_key = ''
+  editProfile.is_embedding_model = profile.is_embedding_model ?? false
+  editProfile.embedding_dim = profile.embedding_dim ?? null
   editDialog.value = true
 }
 
@@ -178,7 +214,9 @@ const handleCreate = async () => {
       base_url: newProfile.base_url,
       model: newProfile.model,
       api_key: newProfile.api_key,
-      temperature: newProfile.temperature
+      temperature: newProfile.temperature,
+      is_embedding_model: newProfile.is_embedding_model,
+      embedding_dim: newProfile.embedding_dim
     })
     createDialog.value = false
     $q.notify({ type: 'positive', message: 'Profile created' })
@@ -199,7 +237,9 @@ const handleUpdate = async () => {
       name: editProfile.name,
       base_url: editProfile.base_url,
       model: editProfile.model,
-      temperature: editProfile.temperature
+      temperature: editProfile.temperature,
+      is_embedding_model: editProfile.is_embedding_model,
+      embedding_dim: editProfile.embedding_dim
     }
     if (editProfile.api_key) {
       payload.api_key = editProfile.api_key

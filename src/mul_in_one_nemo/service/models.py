@@ -16,6 +16,8 @@ class APIProfileRecord:
     temperature: float
     created_at: datetime
     api_key_preview: str | None = None
+    is_embedding_model: bool = False
+    embedding_dim: int | None = None
 
 
 @dataclass(frozen=True)

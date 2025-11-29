@@ -24,6 +24,12 @@ class APIProfileCreate(BaseModel):
     model: str = Field(..., min_length=1, max_length=255)
     api_key: str = Field(..., min_length=8)
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+    is_embedding_model: bool = Field(default=False, description="Whether this profile is for an embedding model")
+    embedding_dim: int | None = Field(
+        default=None,
+        ge=1,
+        description="Maximum embedding dimension supported by the model (e.g., 4096 for Qwen3-Embedding-8B). Users can specify smaller dimensions at runtime."
+    )
 
 
 class APIProfileResponse(BaseModel):
@@ -35,6 +41,8 @@ class APIProfileResponse(BaseModel):
     temperature: float | None
     created_at: datetime
     api_key_preview: str | None
+    is_embedding_model: bool = False
+    embedding_dim: int | None = None
 
     @classmethod
     def from_record(cls, record: APIProfileRecord) -> "APIProfileResponse":
@@ -47,6 +55,8 @@ class APIProfileResponse(BaseModel):
             temperature=record.temperature,
             created_at=record.created_at,
             api_key_preview=record.api_key_preview,
+            is_embedding_model=getattr(record, 'is_embedding_model', False),
+            embedding_dim=getattr(record, 'embedding_dim', None),
         )
 
 
@@ -56,6 +66,12 @@ class APIProfileUpdate(BaseModel):
     model: str | None = Field(default=None, min_length=1, max_length=255)
     api_key: str | None = Field(default=None, min_length=8)
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+    is_embedding_model: bool | None = Field(default=None, description="Whether this profile is for an embedding model")
+    embedding_dim: int | None = Field(
+        default=None,
+        ge=1,
+        description="Maximum embedding dimension supported by the model (e.g., 4096 for Qwen3-Embedding-8B). Users can specify smaller dimensions at runtime."
+    )
 
 
 class PersonaCreate(BaseModel):
@@ -185,6 +201,8 @@ async def create_api_profile(
         model=payload.model,
         api_key=payload.api_key,
         temperature=payload.temperature,
+        is_embedding_model=payload.is_embedding_model,
+        embedding_dim=payload.embedding_dim,
     )
     return APIProfileResponse.from_record(record)
 
@@ -283,9 +301,9 @@ async def create_persona(
                     payload.tenant_id,
                 )
                 await rag_service.ingest_text(
-                    text=background,
+                    text=payload.background,
                     persona_id=record.id,
-                    tenant_id=tenant_id,
+                    tenant_id=payload.tenant_id,
                     source="background"
                 )
                 logger.info("Background ingestion completed for persona_id=%s", record.id)
@@ -479,6 +497,91 @@ async def update_embedding_config(
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+class BuildVectorDBResponse(BaseModel):
+    status: str
+    message: str
+    personas_processed: int
+    total_documents: int
+    errors: list[str] = Field(default_factory=list)
+
+
+@router.post("/build-vector-db", response_model=BuildVectorDBResponse)
+async def build_vector_database(
+    tenant_id: str = Query(..., description="Tenant identifier"),
+    expected_dim: int | None = Query(None, description="Expected embedding dimension (e.g., 384)"),
+    repository: PersonaDataRepository = Depends(get_persona_repository),
+    rag_service: RAGService = Depends(get_rag_service),
+) -> BuildVectorDBResponse:
+    """为所有 Persona 批量构建/更新向量数据库"""
+    logger.info("Building vector database for tenant=%s", tenant_id)
+    
+    personas_processed = 0
+    total_documents = 0
+    errors = []
+    
+    try:
+        # 获取所有 persona
+        personas = await repository.list_personas(tenant_id)
+        
+        for persona in personas:
+            try:
+                # 跳过没有 background 的 persona
+                if not persona.background or not persona.background.strip():
+                    logger.info(f"Skipping persona {persona.id} ({persona.name}): no background content")
+                    continue
+                
+                logger.info(f"Processing persona {persona.id} ({persona.name})")
+                
+                # 删除旧数据
+                await rag_service.delete_documents_by_source(persona.id, tenant_id, source="background")
+                
+                # 重新摄取
+                result = await rag_service.ingest_text(
+                    text=persona.background,
+                    persona_id=persona.id,
+                    tenant_id=tenant_id,
+                    source="background",
+                    expected_dim=expected_dim,
+                )
+                
+                personas_processed += 1
+                total_documents += result.get("documents_added", 0)
+                
+                logger.info(
+                    f"Persona {persona.id} processed: {result.get('documents_added', 0)} documents"
+                )
+                
+            except Exception as e:
+                error_msg = f"Persona {persona.id} ({persona.name}): {str(e)}"
+                logger.error(error_msg, exc_info=True)
+                errors.append(error_msg)
+        
+        status_msg = "completed" if not errors else "completed_with_errors"
+        message = f"Processed {personas_processed} personas, added {total_documents} documents"
+        
+        logger.info(
+            "Vector database build completed: personas=%s docs=%s errors=%s",
+            personas_processed,
+            total_documents,
+            len(errors),
+        )
+        
+        return BuildVectorDBResponse(
+            status=status_msg,
+            message=message,
+            personas_processed=personas_processed,
+            total_documents=total_documents,
+            errors=errors,
+        )
+        
+    except Exception as exc:
+        logger.exception("Failed to build vector database")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Vector database build failed: {str(exc)}"
+        ) from exc
 
 
 class APIHealthResponse(BaseModel):

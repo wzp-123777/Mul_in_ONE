@@ -2,8 +2,16 @@
   <q-page padding>
     <div class="row items-center justify-between q-mb-md">
       <div class="text-h4">Personas</div>
-      <div>
-        <q-btn color="primary" icon="refresh" flat class="q-mr-sm" @click="loadData" />
+      <div class="row items-center q-gutter-sm">
+        <q-btn 
+          color="secondary" 
+          icon="storage" 
+          label="构建向量数据库" 
+          flat 
+          class="q-mr-sm" 
+          @click="buildVectorDatabase"
+          :loading="buildingVectorDB"
+        />
         <q-btn color="primary" icon="add" label="New Persona" @click="openCreateDialog" />
       </div>
     </div>
@@ -18,10 +26,10 @@
         <div class="text-caption text-grey-7 q-mb-md">
           ⚠️ 使用人物背景传记功能（RAG）需要配置一个 Embedding 模型。此配置对所有 Persona 生效。
         </div>
-        <div class="row items-center q-gutter-md">
+        <div class="row items-start q-gutter-md">
           <q-select
             v-model="embeddingProfileId"
-            :options="apiProfiles"
+            :options="apiProfiles.filter(p => p.is_embedding_model)"
             option-value="id"
             option-label="name"
             label="Embedding API Profile"
@@ -29,7 +37,25 @@
             map-options
             clearable
             style="min-width: 300px"
-            hint="选择一个支持 embedding 的模型（如 BAAI/bge-large-zh-v1.5）"
+            hint="只显示标记为 Embedding 模型的 API Profile"
+          >
+            <template v-slot:option="scope">
+              <q-item v-bind="scope.itemProps">
+                <q-item-section>
+                  <q-item-label>{{ scope.opt.name }}</q-item-label>
+                  <q-item-label caption>{{ scope.opt.model }} (最大维度: {{ scope.opt.embedding_dim || 'N/A' }})</q-item-label>
+                </q-item-section>
+              </q-item>
+            </template>
+          </q-select>
+          <q-input
+            v-model.number="actualEmbeddingDim"
+            type="number"
+            label="实际使用维度"
+            hint="留空使用最大维度"
+            style="width: 160px"
+            :disable="!embeddingProfileId"
+            :rules="[val => !val || (val >= 32 && val <= (selectedEmbeddingProfile?.embedding_dim || 8192)) || `范围：32-${selectedEmbeddingProfile?.embedding_dim || 8192}`]"
           />
           <q-btn 
             color="primary" 
@@ -173,18 +199,45 @@
         </q-card-actions>
       </q-card>
     </q-dialog>
+
+    <!-- Build Vector DB Progress Dialog -->
+    <q-dialog v-model="buildProgressDialog" persistent>
+      <q-card style="min-width: 400px">
+        <q-card-section>
+          <div class="text-h6">正在构建向量数据库</div>
+        </q-card-section>
+        <q-card-section class="q-pt-none">
+          <div class="text-body2 q-mb-md">
+            正在为所有 Persona 的背景资料生成向量索引...
+          </div>
+          <q-linear-progress 
+            :value="buildProgress / 100" 
+            size="20px"
+            color="secondary"
+            :indeterminate="buildProgress === 0"
+          >
+            <div class="absolute-full flex flex-center">
+              <q-badge color="white" text-color="secondary" :label="`${buildProgress}%`" />
+            </div>
+          </q-linear-progress>
+        </q-card-section>
+      </q-card>
+    </q-dialog>
   </q-page>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, reactive } from 'vue'
+import { ref, onMounted, reactive, computed } from 'vue'
 import { useQuasar } from 'quasar'
 import { getPersonas, createPersona, updatePersona, deletePersona, getAPIProfiles, type Persona, type APIProfile, type UpdatePersonaPayload, authState } from '../api'
 
+// Quasar instance
 const $q = useQuasar()
+
+// Table and data state
+const loading = ref(false)
 const personas = ref<Persona[]>([])
 const apiProfiles = ref<APIProfile[]>([])
-const loading = ref(false)
 const creating = ref(false)
 const createDialog = ref(false)
 const editDialog = ref(false)
@@ -197,6 +250,17 @@ const selectedPersona = ref<Persona | null>(null)
 const embeddingProfileId = ref<number | null>(null)
 const currentEmbeddingModel = ref<string>('')
 const savingEmbeddingConfig = ref(false)
+const actualEmbeddingDim = ref<number | null>(null)
+
+// Computed: currently selected embedding profile
+const selectedEmbeddingProfile = computed(() => {
+  return apiProfiles.value.find(p => p.id === embeddingProfileId.value)
+})
+
+// Vector DB build state
+const buildingVectorDB = ref(false)
+const buildProgress = ref(0)
+const buildProgressDialog = ref(false)
 
 const newPersona = reactive({
   name: '',
@@ -260,7 +324,7 @@ const loadEmbeddingConfig = async () => {
       const data = await response.json()
       if (data.api_profile_id) {
         embeddingProfileId.value = data.api_profile_id
-        currentEmbeddingModel.value = data.model_name || ''
+        currentEmbeddingModel.value = data.api_model || ''
       }
     }
   } catch (e) {
@@ -289,6 +353,79 @@ const saveEmbeddingConfig = async () => {
     $q.notify({ type: 'negative', message: '保存配置失败' })
   } finally {
     savingEmbeddingConfig.value = false
+  }
+}
+
+const buildVectorDatabase = async () => {
+  if (!embeddingProfileId.value) {
+    $q.notify({ 
+      type: 'warning', 
+      message: '请先配置 Embedding 模型',
+      caption: '向量数据库需要 embedding 模型来生成文档向量'
+    })
+    return
+  }
+
+  // Use actualEmbeddingDim if specified, otherwise fall back to profile's max dimension
+  const embeddingProfile = apiProfiles.value.find(p => p.id === embeddingProfileId.value)
+  const expectedDim = actualEmbeddingDim.value || embeddingProfile?.embedding_dim
+
+  buildingVectorDB.value = true
+  buildProgress.value = 0
+  buildProgressDialog.value = true
+
+  try {
+    const url = new URL(`/api/build-vector-db`, window.location.origin)
+    url.searchParams.set('tenant_id', authState.tenantId)
+    if (expectedDim) {
+      url.searchParams.set('expected_dim', String(expectedDim))
+    }
+    const response = await fetch(url.toString(), { method: 'POST' })
+
+    if (response.ok) {
+      const result = await response.json()
+      buildProgress.value = 100
+      
+      const notifyType = result.errors?.length > 0 ? 'warning' : 'positive'
+      const message = result.errors?.length > 0 
+        ? `完成，但有 ${result.errors.length} 个错误`
+        : '向量数据库构建成功'
+      
+      $q.notify({ 
+        type: notifyType, 
+        message,
+        caption: `处理了 ${result.personas_processed} 个 Persona，共 ${result.total_documents} 个文档`,
+        timeout: 3000
+      })
+
+      if (result.errors?.length > 0) {
+        console.error('Build errors:', result.errors)
+        $q.notify({
+          type: 'info',
+          message: '查看控制台以获取详细错误信息',
+          timeout: 2000
+        })
+      }
+    } else {
+      const error = await response.json()
+      $q.notify({ 
+        type: 'negative', 
+        message: '构建失败',
+        caption: error.detail || '未知错误'
+      })
+    }
+  } catch (e) {
+    console.error('Build vector DB error:', e)
+    $q.notify({ 
+      type: 'negative', 
+      message: '构建向量数据库时发生错误',
+      caption: String(e)
+    })
+  } finally {
+    buildingVectorDB.value = false
+    setTimeout(() => {
+      buildProgressDialog.value = false
+    }, 1500)
   }
 }
 

@@ -197,6 +197,8 @@ class PersonaDataRepository(ABC):
         model: str,
         api_key: str,
         temperature: float | None = None,
+        is_embedding_model: bool = False,
+        embedding_dim: int | None = None,  # Maximum dimension supported by the model
     ) -> APIProfileRecord:
         ...
 
@@ -214,6 +216,8 @@ class PersonaDataRepository(ABC):
         model: str | None = None,
         api_key: str | None = None,
         temperature: float | None = None,
+        is_embedding_model: bool | None = None,
+        embedding_dim: int | None = None,
     ) -> APIProfileRecord:
         ...
 
@@ -543,6 +547,8 @@ class SQLAlchemyPersonaRepository(PersonaDataRepository, BaseSQLAlchemyRepositor
         model: str,
         api_key: str,
         temperature: float | None = None,
+        is_embedding_model: bool = False,
+        embedding_dim: int | None = None,
     ) -> APIProfileRecord:
         async with self._session_scope() as db:
             logger.info("Creating API profile '%s' for tenant=%s", name, tenant_id)
@@ -555,6 +561,8 @@ class SQLAlchemyPersonaRepository(PersonaDataRepository, BaseSQLAlchemyRepositor
                 model=model,
                 api_key_cipher=cipher,
                 temperature=temperature if temperature is not None else self._default_temperature,
+                is_embedding_model=is_embedding_model,
+                embedding_dim=embedding_dim,
             )
             db.add(profile)
             await db.flush()
@@ -625,6 +633,8 @@ class SQLAlchemyPersonaRepository(PersonaDataRepository, BaseSQLAlchemyRepositor
         model: str | None = None,
         api_key: str | None = None,
         temperature: float | None = None,
+        is_embedding_model: bool | None = None,
+        embedding_dim: int | None = None,
     ) -> APIProfileRecord:
         async with self._session_scope() as db:
             logger.info("Updating API profile id=%s tenant=%s", profile_id, tenant_id)
@@ -638,6 +648,10 @@ class SQLAlchemyPersonaRepository(PersonaDataRepository, BaseSQLAlchemyRepositor
                 profile.model = model
             if temperature is not None:
                 profile.temperature = temperature
+            if is_embedding_model is not None:
+                profile.is_embedding_model = is_embedding_model
+            if embedding_dim is not None:
+                profile.embedding_dim = embedding_dim
             decrypted_key = None
             if api_key is not None:
                 decrypted_key = api_key or None
@@ -997,6 +1011,8 @@ class SQLAlchemyPersonaRepository(PersonaDataRepository, BaseSQLAlchemyRepositor
             temperature=row.temperature,
             created_at=created_at if created_at.tzinfo else created_at.replace(tzinfo=timezone.utc),
             api_key_preview=preview,
+            is_embedding_model=getattr(row, 'is_embedding_model', False),
+            embedding_dim=getattr(row, 'embedding_dim', None),
         )
 
     @staticmethod

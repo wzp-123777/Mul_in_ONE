@@ -3,8 +3,6 @@
 Provides a structured tool for web searching and optional fetching of result pages.
 """
 
-from __future__ import annotations
-
 import re
 import logging
 from typing import List, Optional, AsyncGenerator, Tuple
@@ -100,11 +98,14 @@ async def web_search_tool(config: WebSearchToolConfig, builder):  # builder pres
         # Simple one-shot; stream emits a single chunk
         yield await _single(input_data)
 
-    return FunctionInfo.create(
-        single_fn=_single,
-        stream_fn=_stream,
-        input_schema=WebSearchInput,
-        single_output_schema=WebSearchOutput,
-        stream_output_schema=WebSearchOutput,
-        description="搜索互联网获取最新公开信息（如新闻、价格、版本号、事实核查等）。返回相关网页的标题、链接和摘要，可用于引用外部来源。",
-    )
+    try:
+        yield FunctionInfo.create(
+            single_fn=_single,
+            stream_fn=_stream,
+            input_schema=WebSearchInput,
+            single_output_schema=WebSearchOutput,
+            stream_output_schema=WebSearchOutput,
+            description="搜索互联网获取最新公开信息（如新闻、价格、版本号、事实核查等）。返回相关网页的标题、链接和摘要，可用于引用外部来源。",
+        )
+    finally:
+        pass

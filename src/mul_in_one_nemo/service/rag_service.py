@@ -1,6 +1,7 @@
 """Service for handling Retrieval-Augmented Generation (RAG) functionalities."""
 
 import logging
+import uuid
 from pathlib import Path
 from typing import Callable, List, Optional
 
@@ -224,21 +225,70 @@ class RAGService:
         else:
             embedder = await self._create_embedder(persona_id)
 
-        # Ensure embedder is exercised (tests assert aembed_documents is called)
+        # Generate embeddings and prepare data for manual insertion
+        logger.info("Generating embeddings for document chunks...")
+        embeddings = await embedder.aembed_documents([d.page_content for d in split_docs])
         try:
-            await embedder.aembed_documents([d.page_content for d in split_docs])
-        except Exception:
-            # Best-effort; Milvus will embed again in real runs. Tests use mock.
-            pass
-        vector_store = Milvus(
-            embedding_function=embedder,
-            collection_name=collection_name,
-            connection_args={"uri": DEFAULT_MILVUS_URI},
-            auto_id=True,
-        )
+            import numpy as np
+            arr = np.asarray(embeddings, dtype=float)
+            logger.info(f"Embeddings array shape: {arr.shape}")
+            if arr.ndim != 2:
+                raise ValueError(f"Embeddings must be 2D, got shape {arr.shape}")
+            if arr.shape[0] != len(split_docs):
+                raise ValueError(
+                    f"Embedding row count {arr.shape[0]} != chunk count {len(split_docs)}. Do not reshape; one vector per chunk."
+                )
+            embeddings = arr.tolist()
+        except Exception as e:
+            logger.warning(f"Embeddings normalization warning: {e}. Proceeding with raw embeddings list.")
+        # Some providers may return multiple embeddings per input (e.g., variants).
+        # Ensure one embedding per chunk to match Milvus num_rows.
+        if len(embeddings) != len(split_docs):
+            try:
+                if len(embeddings) % len(split_docs) == 0:
+                    group_size = len(embeddings) // len(split_docs)
+                    logger.warning(
+                        f"Embedding count {len(embeddings)} != chunks {len(split_docs)}; "
+                        f"group_size={group_size}, taking first embedding of each group"
+                    )
+                    embeddings = [embeddings[i * group_size] for i in range(len(split_docs))]
+                else:
+                    logger.warning(
+                        f"Embedding count {len(embeddings)} mismatches chunks {len(split_docs)}; "
+                        "truncating to chunk count"
+                    )
+                    embeddings = embeddings[:len(split_docs)]
+            except Exception:
+                embeddings = embeddings[:len(split_docs)]
         
-        logger.info("Adding document chunks to Milvus...")
-        doc_ids = await vector_store.aadd_documents(documents=split_docs)
+        # Connect to Milvus and insert with manual UUIDs
+        connections.connect(alias="default", uri=DEFAULT_MILVUS_URI)
+        collection = Collection(collection_name)
+        
+        # Prepare data with string UUIDs
+        doc_ids = [str(uuid.uuid4()) for _ in split_docs]
+        texts = [d.page_content for d in split_docs]
+        sources = [d.metadata.get("source", "unknown") for d in split_docs]
+        
+        logger.info(f"Adding {len(doc_ids)} document chunks to Milvus...")
+        # Safety checks to ensure one vector per chunk and equal column lengths
+        len_ids = len(doc_ids)
+        len_vecs = len(embeddings)
+        len_texts = len(texts)
+        len_srcs = len(sources)
+        if not (len_ids == len_vecs == len_texts == len_srcs):
+            logger.error(
+                f"Column length mismatch before insert: ids={len_ids} vecs={len_vecs} texts={len_texts} srcs={len_srcs}"
+            )
+            raise ValueError("Column length mismatch: ensure one embedding per chunk")
+
+        # Column-based insert required by Milvus: [document_id, vector, text, source]
+        data_columns = [doc_ids, embeddings, texts, sources]
+        logger.info(
+            f"Inserting data columns: cols={len(data_columns)} rows={len(doc_ids)} into {collection_name}"
+        )
+        collection.insert(data_columns)
+        collection.flush()
         logger.info(f"Successfully ingested {len(doc_ids)} document chunks into '{collection_name}'.")
 
         # Clean up cache
@@ -246,7 +296,7 @@ class RAGService:
         
         return {"status": "success", "documents_added": len(doc_ids), "collection_name": collection_name}
 
-    async def ingest_text(self, text: str, persona_id: int, tenant_id: str, source: Optional[str] = None) -> dict:
+    async def ingest_text(self, text: str, persona_id: int, tenant_id: str, source: Optional[str] = None, expected_dim: Optional[int] = None) -> dict:
         """
         Ingests raw text, generates embeddings, and stores them in a persona-specific
         Milvus collection.
@@ -270,15 +320,55 @@ class RAGService:
         else:
             embedder = await self._create_embedder(persona_id)
 
-        vector_store = Milvus(
-            embedding_function=embedder,
-            collection_name=collection_name,
-            connection_args={"uri": DEFAULT_MILVUS_URI},
-            auto_id=True,
-        )
+        # Generate embeddings and prepare data for manual insertion
+        logger.info("Generating embeddings for document chunks...")
+        embeddings = await embedder.aembed_documents([d.page_content for d in split_docs])
+        try:
+            import numpy as np
+            arr = np.asarray(embeddings, dtype=float)
+            logger.info(f"Embeddings array shape: {arr.shape}")
+            if arr.ndim != 2:
+                raise ValueError(f"Embeddings must be 2D, got shape {arr.shape}")
+            if arr.shape[0] != len(split_docs):
+                raise ValueError(
+                    f"Embedding row count {arr.shape[0]} != chunk count {len(split_docs)}. Do not reshape; one vector per chunk."
+                )
+            if expected_dim is not None and arr.shape[1] != expected_dim:
+                raise ValueError(
+                    f"Embedding dim {arr.shape[1]} != expected_dim {expected_dim}. Please adjust model or expected_dim."
+                )
+            embeddings = arr.tolist()
+        except Exception as e:
+            logger.warning(f"Embeddings normalization warning: {e}. Proceeding with raw embeddings list.")
         
-        logger.info("Adding document chunks to Milvus...")
-        doc_ids = await vector_store.aadd_documents(documents=split_docs)
+        # Connect to Milvus and insert with manual UUIDs
+        connections.connect(alias="default", uri=DEFAULT_MILVUS_URI)
+        collection = Collection(collection_name)
+        
+        # Prepare data with string UUIDs
+        doc_ids = [str(uuid.uuid4()) for _ in split_docs]
+        texts = [d.page_content for d in split_docs]
+        sources = [d.metadata.get("source", source) for d in split_docs]
+        
+        logger.info(f"Adding {len(doc_ids)} document chunks to Milvus...")
+        # Safety checks to ensure one vector per chunk and equal column lengths
+        len_ids = len(doc_ids)
+        len_vecs = len(embeddings)
+        len_texts = len(texts)
+        len_srcs = len(sources)
+        if not (len_ids == len_vecs == len_texts == len_srcs):
+            logger.error(
+                f"Column length mismatch before insert: ids={len_ids} vecs={len_vecs} texts={len_texts} srcs={len_srcs}"
+            )
+            raise ValueError("Column length mismatch: ensure one embedding per chunk")
+
+        # Column-based insert required by Milvus: [document_id, vector, text, source]
+        data_columns = [doc_ids, embeddings, texts, sources]
+        logger.info(
+            f"Inserting data columns: cols={len(data_columns)} rows={len(doc_ids)} into {collection_name}"
+        )
+        collection.insert(data_columns)
+        collection.flush()
         logger.info(f"Successfully ingested {len(doc_ids)} document chunks into '{collection_name}'.")
         
         return {"status": "success", "documents_added": len(doc_ids), "collection_name": collection_name}
@@ -296,7 +386,7 @@ class RAGService:
             # Connect to Milvus
             connections.connect(alias="default", uri=DEFAULT_MILVUS_URI)
 
-            # Check if collection exists using utility
+            # Check if collection exists
             if not utility.has_collection(collection_name):
                 logger.info(f"Collection '{collection_name}' does not exist. Skipping delete.")
                 return

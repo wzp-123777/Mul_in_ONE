@@ -10,6 +10,7 @@ src/mul_in_one_nemo/persona.py
 src/mul_in_one_nemo/persona_function.py
 src/mul_in_one_nemo/runtime.py
 src/mul_in_one_nemo/scheduler.py
+src/mul_in_one_nemo.egg-info/.gitignore
 src/mul_in_one_nemo.egg-info/PKG-INFO
 src/mul_in_one_nemo.egg-info/SOURCES.txt
 src/mul_in_one_nemo.egg-info/dependency_links.txt
@@ -22,6 +23,8 @@ src/mul_in_one_nemo/service/__init__.py
 src/mul_in_one_nemo/service/app.py
 src/mul_in_one_nemo/service/dependencies.py
 src/mul_in_one_nemo/service/models.py
+src/mul_in_one_nemo/service/rag_adapter.py
+src/mul_in_one_nemo/service/rag_context.py
 src/mul_in_one_nemo/service/rag_dependencies.py
 src/mul_in_one_nemo/service/rag_service.py
 src/mul_in_one_nemo/service/repositories.py
@@ -30,6 +33,8 @@ src/mul_in_one_nemo/service/session_service.py
 src/mul_in_one_nemo/service/routers/debug.py
 src/mul_in_one_nemo/service/routers/personas.py
 src/mul_in_one_nemo/service/routers/sessions.py
+src/mul_in_one_nemo/tools/rag_query_tool.py
+src/mul_in_one_nemo/tools/web_search_tool.py
 tests/test_rag_service.py
 tests/test_rag_service_db_resolution.py
 tests/test_service_persona_repository.py

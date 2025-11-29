@@ -12,7 +12,7 @@
       mkDevShell = system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
-          pythonEnv = pkgs.python314;
+          pythonEnv = pkgs.python312;
         in
         pkgs.mkShell {
           packages = [
@@ -31,7 +31,7 @@
           shellHook = ''
             echo "Welcome to the Mul in One dev environment!"
             export PIP_DISABLE_PIP_VERSION_CHECK=1
-            export UV_SYSTEM_PYTHON="${pythonEnv}/bin/python3"
+            # Note: UV_SYSTEM_PYTHON not set - let uv manage venv Python version
             export NPM_CONFIG_PREFIX="$PWD/.npm-global"
             mkdir -p "$NPM_CONFIG_PREFIX"
             export PATH="$NPM_CONFIG_PREFIX/bin:$PATH"

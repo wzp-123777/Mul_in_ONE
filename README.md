@@ -1,7 +1,7 @@
 # Mul-in-One (MIO) - 多智能体对话系统
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11-3.13](https://img.shields.io/badge/python-3.11--3.13-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green.svg)](https://fastapi.tiangolo.com/)
 [![Vue 3](https://img.shields.io/badge/Vue.js-3.x-brightgreen.svg)](https://vuejs.org/)
 
@@ -134,12 +134,14 @@ Mul_in_ONE/
 
 ### 前置要求
 
-- **Python 3.11+**
+- **Python 3.11-3.13（推荐 3.12）**
 - **[uv](https://github.com/astral-sh/uv)** - 推荐的 Python 包管理器
 - **Node.js 18+** 和 npm
 - **PostgreSQL 14+**
 - **Milvus** - 向量数据库 (推荐使用 Docker)
 - **Docker** (可选,用于运行 Milvus)
+
+> ℹ️ 目前 NVIDIA NeMo Agent Toolkit 在 Python 3.14 上存在 `TypeError: 'coroutine' object is not an async iterator` 的已知问题。请固定使用 3.11-3.13（推荐 3.12）。详见 `NAT_ISSUE_PYTHON314_COMPATIBILITY.md`。
 
 ### 安装步骤
 
@@ -154,7 +156,9 @@ cd Mul_in_ONE
 
 ```bash
 # 创建并激活 Python 虚拟环境
-uv venv .venv
+# NAT 在 Python 3.14 上存在已知问题，请固定到 3.12
+uv python install 3.12
+uv venv --python 3.12 .venv
 source .venv/bin/activate  # Windows: .venv\Scripts\activate
 
 # 运行引导脚本 (自动克隆 NeMo Toolkit 并安装所有依赖)

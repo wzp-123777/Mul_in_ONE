@@ -206,7 +206,13 @@ class SessionService:
             history_payload.insert(0, {"sender": "user_persona", "content": record.user_persona})
         enriched_message = replace(message, history=history_payload, user_persona=record.user_persona)
         runtime = self._ensure_runtime(record)
-        logger.info(f"enqueue_message: using runtime for session {record.id}; pushing message")
+        preview = (message.content or "").strip()
+        preview = preview[:80] + ("…" if len(preview) > 80 else "")
+        logger.info(
+            "enqueue_message: using runtime for session %s; pushing message preview=%s",
+            record.id,
+            preview,
+        )
         await runtime.enqueue(enriched_message)
         logger.info(f"enqueue_message: message pushed to queue for session {record.id}")
 

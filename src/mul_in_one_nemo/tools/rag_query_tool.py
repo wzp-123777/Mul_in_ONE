@@ -7,8 +7,6 @@ Security: tenant_id and persona_id are injected from config/context at runtime,
 not exposed to LLM to prevent token waste and security issues (hallucination risks).
 """
 
-from __future__ import annotations
-
 import logging
 from typing import List, AsyncGenerator, Optional
 
@@ -113,11 +111,14 @@ async def rag_query_tool(config: RagQueryToolConfig, builder):
     async def _stream(input_data: RagQueryInput) -> AsyncGenerator[RagQueryOutput, None]:
         yield await _single(input_data)
 
-    return FunctionInfo.create(
-        single_fn=_single,
-        stream_fn=_stream,
-        input_schema=RagQueryInput,
-        single_output_schema=RagQueryOutput,
-        stream_output_schema=RagQueryOutput,
-        description="查询当前 Persona 的背景资料与相关知识片段,用于准确回答涉及人物设定、经历或专业知识的问题。返回最相关的文档片段及来源标注。",
-    )
+    try:
+        yield FunctionInfo.create(
+            single_fn=_single,
+            stream_fn=_stream,
+            input_schema=RagQueryInput,
+            single_output_schema=RagQueryOutput,
+            stream_output_schema=RagQueryOutput,
+            description="查询当前 Persona 的背景资料与相关知识片段,用于准确回答涉及人物设定、经历或专业知识的问题。返回最相关的文档片段及来源标注。",
+        )
+    finally:
+        pass

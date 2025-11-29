@@ -97,6 +97,8 @@ export interface APIProfile {
   temperature?: number;
   created_at: string;
   api_key_preview?: string;
+  is_embedding_model?: boolean;
+  embedding_dim?: number | null;
 }
 
 export interface CreateAPIProfilePayload {
@@ -106,6 +108,8 @@ export interface CreateAPIProfilePayload {
   model: string;
   api_key: string;
   temperature?: number;
+  is_embedding_model?: boolean;
+  embedding_dim?: number | null;
 }
 
 export interface UpdateAPIProfilePayload {
@@ -115,6 +119,8 @@ export interface UpdateAPIProfilePayload {
   model?: string;
   api_key?: string;
   temperature?: number;
+  is_embedding_model?: boolean;
+  embedding_dim?: number | null;
 }
 
 export interface Persona {

@@ -71,6 +71,8 @@ class APIProfile(Base):
     temperature: Mapped[float] = mapped_column(default=0.4)
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    is_embedding_model: Mapped[bool] = mapped_column(Boolean, default=False)
+    embedding_dim: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class Persona(Base):
