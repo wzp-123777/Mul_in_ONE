@@ -1,4 +1,4 @@
-"""Runtime binding NeMo Agent Toolkit (NAT) builder with personas (pure NAT version)."""
+"""Runtime binding NeMo Agent Toolkit builder with personas."""
 
 from __future__ import annotations
 
@@ -9,6 +9,9 @@ from nat.builder.workflow_builder import WorkflowBuilder
 from nat.llm.nim_llm import NIMModelConfig
 from nat.builder.function import Function
 
+# 导入 LangChain 插件注册(NIM 在 NAT 中依赖 LangChain 封装)
+from nat.plugins.langchain import register as _langchain_register  # noqa: F401
+
 from .config import Settings
 from .persona import Persona
 from .persona_function import PersonaDialogueFunctionConfig
@@ -16,8 +19,6 @@ from .tools.web_search_tool import WebSearchToolConfig
 from .tools.rag_query_tool import RagQueryToolConfig
 
 logger = logging.getLogger(__name__)
-
-# 纯 NAT 封装：去除 LangChain 相关补丁与插件注册
 
 
 class MultiAgentRuntime:

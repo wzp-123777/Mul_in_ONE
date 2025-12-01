@@ -8,6 +8,7 @@ from langchain_core.messages import HumanMessage, SystemMessage, BaseMessage
 
 
 from nat.builder.builder import Builder
+from nat.builder.framework_enum import LLMFrameworkEnum
 from nat.builder.function_info import FunctionInfo
 from nat.cli.register_workflow import register_function
 from nat.data_models.component_ref import LLMRef
@@ -49,14 +50,14 @@ class PersonaDialogueFunctionConfig(FunctionBaseConfig, name="mul_in_one_persona
 
 @register_function(config_type=PersonaDialogueFunctionConfig)
 async def persona_dialogue_function(config: PersonaDialogueFunctionConfig, builder: Builder):
-    # 使用 NAT 原生封装获取 LLM（不再通过 LangChain 包装）
-    llm = await builder.get_llm(config.llm_name)
+    # NIM 在 NAT 中只注册了 LangChain 封装，必须使用 LLMFrameworkEnum.LANGCHAIN
+    llm = await builder.get_llm(config.llm_name, wrapper_type=LLMFrameworkEnum.LANGCHAIN)
     
     # Retrieve and bind tools if any are specified
     tools = []
     if config.tool_names:
-        # 使用 NAT 原生封装获取工具
-        tools = await builder.get_tools(tool_names=config.tool_names)
+        # 工具也使用 LangChain 封装以保持一致性
+        tools = await builder.get_tools(tool_names=config.tool_names, wrapper_type=LLMFrameworkEnum.LANGCHAIN)
     
     # Create a simple textual prompt the ToolCallAgentGraph expects.
     # Conversation state (system prompt/history) is provided via ToolCallAgentGraphState.

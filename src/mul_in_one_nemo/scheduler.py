@@ -55,15 +55,32 @@ class TurnScheduler:
             本轮应该发言的 Agent 列表
         """
         context_tags = context_tags or []
+        
+        # ===== 第一优先级：处理被 @ 的 Agent（绝对优先） =====
+        mentioned_speakers = []
+        for persona in self.personas.values():
+            since_last = self.turn - persona.last_turn
+            # 被 @ 且不在冷却期的 Agent 必须立即回复
+            if persona.name in context_tags and since_last > 0:
+                mentioned_speakers.append(persona.name)
+        
+        if mentioned_speakers:
+            # 更新状态并直接返回被提及者（跳过后续计算）
+            for persona in self.personas.values():
+                if persona.name in mentioned_speakers:
+                    persona.last_turn = self.turn
+                    persona.consecutive_speaks += 1
+                else:
+                    persona.consecutive_speaks = 0
+            self.silence_count = 0
+            self.turn += 1
+            return mentioned_speakers
+        
+        # ===== 第二优先级：主动发言计算（无人被 @ 时） =====
         candidates: List[tuple[str, float]] = []
         
         for persona in self.personas.values():
             since_last = self.turn - persona.last_turn
-            
-            # 被 @ 的 Agent 必须回复（除非刚说过话）
-            if persona.name in context_tags and since_last > 0:
-                candidates.append((persona.name, 100.0))
-                continue
             
             # 基础分数：主动性
             score = persona.proactivity
@@ -93,20 +110,6 @@ class TurnScheduler:
             score += random.uniform(-0.1, 0.1)
             
             candidates.append((persona.name, score))
-
-        # --- 新增逻辑：优先处理被 @ 的情况 ---
-        mentioned_speakers = [name for name, score in candidates if score >= 100]
-        if mentioned_speakers:
-            # 更新状态并直接返回被提及者
-            for persona in self.personas.values():
-                if persona.name in mentioned_speakers:
-                    persona.last_turn = self.turn
-                    persona.consecutive_speaks += 1
-                else:
-                    persona.consecutive_speaks = 0
-            self.silence_count = 0
-            self.turn += 1
-            return mentioned_speakers
         
         # --- 原有逻辑：处理主动发言的情况 ---
         # 按分数排序
