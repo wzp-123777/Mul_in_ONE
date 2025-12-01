@@ -263,8 +263,14 @@ const handleDelete = async () => {
     deleteDialog.value = false
     $q.notify({ type: 'positive', message: 'Profile deleted' })
     loadProfiles()
-  } catch (e) {
-    $q.notify({ type: 'negative', message: 'Failed to delete profile' })
+  } catch (e: any) {
+    const errorMsg = e?.response?.data?.detail || e?.message || String(e)
+    console.error('Delete profile error:', errorMsg, e)
+    $q.notify({ 
+      type: 'negative', 
+      message: 'Failed to delete profile',
+      caption: errorMsg 
+    })
   } finally {
     deleting.value = false
   }

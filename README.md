@@ -1,6 +1,6 @@
 # Mul-in-One (MIO) - 多智能体对话系统
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Python 3.11-3.13](https://img.shields.io/badge/python-3.11--3.13-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green.svg)](https://fastapi.tiangolo.com/)
 [![Vue 3](https://img.shields.io/badge/Vue.js-3.x-brightgreen.svg)](https://vuejs.org/)
@@ -595,7 +595,8 @@ docker logs milvus-standalone
 
 ## 📄 许可证
 
-本项目采用 [MIT License](LICENSE) 开源协议。
+- 本项目以 [GPLv3](LICENSE) 授权发布。
+- 仓库中的第三方子模块与依赖（如 `external/NeMo-Agent-Toolkit`）保留其原始许可证，仍按各自许可证分发。
 
 ## 🙏 致谢
 

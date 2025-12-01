@@ -797,11 +797,21 @@ class SQLAlchemyPersonaRepository(PersonaDataRepository, BaseSQLAlchemyRepositor
             logger.info("Deleting API profile id=%s user=%s", profile_id, username)
             user = await self._get_user_by_username(db, username)
             profile = await self._assert_profile_owned(db, user.id, profile_id)
+            
+            # Clear references from personas table
             await db.execute(
                 update(PersonaRow)
                 .where(PersonaRow.api_profile_id == profile.id)
                 .values(api_profile_id=None)
             )
+            
+            # Clear references from users table (embedding_api_profile_id)
+            await db.execute(
+                update(UserRow)
+                .where(UserRow.embedding_api_profile_id == profile.id)
+                .values(embedding_api_profile_id=None)
+            )
+            
             await db.delete(profile)
 
     async def create_persona(
