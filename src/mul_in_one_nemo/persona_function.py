@@ -112,7 +112,7 @@ async def persona_dialogue_function(config: PersonaDialogueFunctionConfig, build
 你正在参与一个多人自由对话。请注意：
 
 {user_info}{participants_info}【对话规则】
-1. 这是自然的群聊对话，不是一问一答。
+1. 这是自然的多人在一起的互动对话，不是一问一答。
 2. 你可以：
    - 回应其他人的观点（不需要被 @ 也可以回应）
    - 提出自己的问题或想法
@@ -161,7 +161,7 @@ async def persona_dialogue_function(config: PersonaDialogueFunctionConfig, build
 - 每轮可按需调用 1-2 次，避免过度调用导致延迟。
 - 在回答中标注引用，区分来自工具的结论与个人观点。
 
-记住：这是群聊，要像真人一样自然互动！"""
+记住：这是一群人在一起说话，要像真人一样自然互动！"""
 
         messages: List[BaseMessage] = [SystemMessage(content=system_prompt_content)]
 

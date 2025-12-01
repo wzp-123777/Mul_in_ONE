@@ -389,7 +389,11 @@ class NemoRuntimeAdapter(RuntimeAdapter):
                         if persona_name == last_speaker:
                             continue
                         last_message = memory.get_last_message()
-                        observed_message = f"你刚刚观察到 \"{last_speaker}\" 说: \"{last_message}\"。现在轮到你发言，你可以对此进行评论，或开启新话题。"
+                        # Enhance prompt for collaborative follow-up: encourage direct reference & building on others
+                        observed_message = (
+                            f"上一位是 {last_speaker} 说: \"{last_message}\"。请在继续推进当前主题或补充改进建议的同时，"
+                            f"也可以对另一位尚未回应的观点进行衔接。如有需要，可以提出具体的下一步安排。"
+                        )
                         payload = {
                             "history": memory.as_payload(runtime.settings.memory_window, last_n=1),
                             "user_message": observed_message,
@@ -501,9 +505,13 @@ class NemoRuntimeAdapter(RuntimeAdapter):
                         logger.info("Stopping due to low conversation heat")
                         break
 
-                # If user explicitly targeted personas and all have responded, end early
-                if user_selected_personas and all(p in responded_personas for p in user_selected_personas):
-                    logger.info("All explicitly targeted personas responded; stopping")
+                # Allow conversation to continue naturally beyond first round responses
+                # Only end early if soft_closing (user said goodnight etc) after all mentioned personas spoke
+                if (soft_closing
+                    and user_selected_personas 
+                    and all(p in responded_personas for p in user_selected_personas)
+                ):
+                    logger.info("Soft closing detected and all explicitly targeted personas responded; stopping")
                     break
 
                 # If soft closing by user: only first round executed already (max_exchanges=1) so loop ends naturally
