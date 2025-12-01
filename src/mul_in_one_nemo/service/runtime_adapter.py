@@ -276,26 +276,6 @@ class NemoRuntimeAdapter(RuntimeAdapter):
 
             # 2. Set initial context for the turn
             context_tags = self._extract_tags(user_message_content, persona_settings.personas)
-            # Explicit stop phrase detection from user message (immediate stop)
-            explicit_stop = False
-            try:
-                stop_pattern = re.compile(r"(别说了|不要说了|先这样|就到这|打住|停一下|别聊了|结束吧|够了|晚安|睡觉|good\s*night|stop|that\'s\s*it)", re.IGNORECASE)
-                if stop_pattern.search(user_message_content or ""):
-                    explicit_stop = True
-            except Exception:
-                explicit_stop = False
-            user_selected_personas = None  # Track user's explicit selection
-            if message.target_personas:
-                # Map handle to name since target_personas contains handles (e.g., "Uika")
-                # but context_tags and scheduler use persona names (e.g., "三角初华")
-                handle_to_name = {p.handle: p.name for p in persona_settings.personas}
-                user_selected_personas = []
-                for target_handle in message.target_personas:
-                    persona_name = handle_to_name.get(target_handle)
-                    if persona_name:
-                        if persona_name not in context_tags:
-                            context_tags.append(persona_name)
-                        user_selected_personas.append(persona_name)
 
             last_speaker = message.sender or "user"
             is_first_round = True
@@ -314,10 +294,7 @@ class NemoRuntimeAdapter(RuntimeAdapter):
             sim_threshold = float(getattr(self._settings, "stop_similarity_threshold", 0.9))
             logger.info(f"Starting conversation loop: context_tags={context_tags}, user_selected={user_selected_personas}")
 
-            # If explicit stop requested by user, short-circuit
-            if explicit_stop:
-                yield {"event": "session.stopped", "data": {"session_id": session.id, "reason": "explicit_stop", "by": username}}
-                return
+                # 注意：显式停止命令只在 SessionService 层拦截（且仅对“正在流式处理中”生效）
 
             # 3. Start the conversation loop
             for exchange_round in range(max_exchanges):
@@ -448,7 +425,7 @@ class NemoRuntimeAdapter(RuntimeAdapter):
 
                     # Closing phrase detection on agent reply
                     try:
-                        closing_pattern = re.compile(r"(晚安|明天见|回头见|下次聊|先这样|到此为止|就到这|祝.*好梦|good\s*night|see\s*you)")
+                        closing_pattern = re.compile(r"(晚安|明天见|回头见|下次聊|到此为止|就到这|祝.*好梦|good\s*night|see\s*you)")
                         if closing_pattern.search(full_reply or ""):
                             closing_detected = True
                     except Exception:

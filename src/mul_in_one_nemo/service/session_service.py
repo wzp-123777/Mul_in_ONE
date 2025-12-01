@@ -47,6 +47,7 @@ class SessionRuntime:
         self._subscriber_queues: Set[asyncio.Queue[SessionStreamEvent]] = set()
         self._worker: asyncio.Task[None] | None = None
         self._last_stop_reason: str | None = None
+        self._streaming: bool = False
 
     def start(self) -> None:
         if self._worker is None or self._worker.done():
@@ -75,6 +76,10 @@ class SessionRuntime:
             )
         )
         await self.stop()
+
+    @property
+    def is_streaming(self) -> bool:
+        return self._streaming
 
     async def enqueue(self, message: SessionMessage) -> None:
         logger.info(f"Enqueue called for session {self.record.id}")
@@ -106,12 +111,15 @@ class SessionRuntime:
             logger.info(f"Stream obtained, starting iteration")
             trackers: Dict[str, Dict[str, Any]] = {}
             try:
+                self._streaming = True
                 async for raw_event in stream:
                     logger.debug(f"Worker received event: {raw_event}")
                     await self._handle_adapter_event(raw_event, trackers)
             except Exception as e:
                 logger.error(f"Exception during stream iteration: {e}", exc_info=True)
                 raise
+            finally:
+                self._streaming = False
 
             # Flush any trackers that did not receive an explicit agent.end
             for sender in list(trackers.keys()):
@@ -223,6 +231,17 @@ class SessionService:
         record = await self._repository.get(message.session_id)
         if record is None:
             raise SessionNotFoundError(message.session_id)
+        # Intercept stop commands only if streaming is in progress
+        runtime = self._ensure_runtime(record)
+        try:
+            import re as _re
+            stop_cmd = _re.compile(r"^\s*(?:/stop|stop|结束|终止|强制停止|停止对话)\s*[。.!！]*\s*$", _re.IGNORECASE)
+            if runtime.is_streaming and stop_cmd.match(message.content or ""):
+                await runtime.force_stop("user_explicit_stop")
+                return
+        except Exception:
+            pass
+
         await self._repository.add_message(message.session_id, sender=message.sender, content=message.content)
         history_records = await self._repository.list_messages(message.session_id, limit=self._history_limit)
         history_payload = [{"sender": r.sender, "content": r.content} for r in history_records]
@@ -242,7 +261,7 @@ class SessionService:
             user_persona=record.user_persona,
             target_personas=target_personas,
         )
-        runtime = self._ensure_runtime(record)
+        # runtime ensured earlier
         preview = (message.content or "").strip()
         preview = preview[:80] + ("…" if len(preview) > 80 else "")
         logger.info(
