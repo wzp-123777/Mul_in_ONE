@@ -21,6 +21,15 @@
         >
           <q-tooltip>Edit session details</q-tooltip>
         </q-btn>
+        <q-btn
+          flat
+          dense
+          color="negative"
+          icon="stop"
+          @click="handleStopSession"
+        >
+          <q-tooltip>Stop conversation</q-tooltip>
+        </q-btn>
         <q-select
           v-model="selectedPersonas"
           :options="personaOptions"
@@ -460,6 +469,7 @@ import {
   getSession,
   updateSessionParticipants,
   updateSessionMeta,
+  stopSession,
   type Message, 
   type Persona, 
   authState 
@@ -617,6 +627,16 @@ const handleWebSocketMessage = (message: WebSocketMessage) => {
     case 'agent.end':
       handleAgentEnd(message.data)
       break
+    case 'session.stopped':
+      // Mark any loading agent messages as finished
+      for (let i = messages.value.length - 1; i >= 0; i--) {
+        const msg = messages.value[i]
+        if (msg && msg.loading) {
+          msg.loading = false
+        }
+      }
+      $q.notify({ type: 'info', message: 'Conversation stopped', position: 'top', timeout: 1500 })
+      break
     case 'message.new':
       handleNewMessage(message.data)
       break
@@ -743,6 +763,16 @@ const handleSubmit = async () => {
     messages.value = messages.value.filter(m => !m.id.toString().startsWith('temp-'))
   } finally {
     sending.value = false
+  }
+}
+
+const handleStopSession = async () => {
+  try {
+    await stopSession(sessionId, 'user_clicked_stop')
+    $q.notify({ type: 'info', message: 'Stopping…', position: 'top', timeout: 1000 })
+  } catch (e) {
+    console.error('Failed to stop session:', e)
+    $q.notify({ type: 'negative', message: 'Failed to stop', position: 'top' })
   }
 }
 

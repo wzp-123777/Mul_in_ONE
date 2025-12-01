@@ -276,6 +276,14 @@ class NemoRuntimeAdapter(RuntimeAdapter):
 
             # 2. Set initial context for the turn
             context_tags = self._extract_tags(user_message_content, persona_settings.personas)
+            # Explicit stop phrase detection from user message (immediate stop)
+            explicit_stop = False
+            try:
+                stop_pattern = re.compile(r"(别说了|不要说了|先这样|就到这|打住|停一下|别聊了|结束吧|够了|晚安|睡觉|good\s*night|stop|that\'s\s*it)", re.IGNORECASE)
+                if stop_pattern.search(user_message_content or ""):
+                    explicit_stop = True
+            except Exception:
+                explicit_stop = False
             user_selected_personas = None  # Track user's explicit selection
             if message.target_personas:
                 # Map handle to name since target_personas contains handles (e.g., "Uika")
@@ -305,6 +313,11 @@ class NemoRuntimeAdapter(RuntimeAdapter):
             heat_threshold = float(getattr(self._settings, "stop_heat_threshold", 0.6))
             sim_threshold = float(getattr(self._settings, "stop_similarity_threshold", 0.9))
             logger.info(f"Starting conversation loop: context_tags={context_tags}, user_selected={user_selected_personas}")
+
+            # If explicit stop requested by user, short-circuit
+            if explicit_stop:
+                yield {"event": "session.stopped", "data": {"session_id": session.id, "reason": "explicit_stop", "by": username}}
+                return
 
             # 3. Start the conversation loop
             for exchange_round in range(max_exchanges):
@@ -337,6 +350,7 @@ class NemoRuntimeAdapter(RuntimeAdapter):
                     # Try next round instead of terminating the conversation
                     continue
 
+                closing_detected = False
                 for persona_name in speakers:
                     logger.info(f"Processing persona: {persona_name}")
                     yield {"event": "agent.start", "data": {"sender": persona_name}}
@@ -431,7 +445,21 @@ class NemoRuntimeAdapter(RuntimeAdapter):
                     # dedupe context_tags list size by converting to set then list to prevent unbounded growth
                     if len(context_tags) > 32:
                         context_tags = list(dict.fromkeys(context_tags))
+
+                    # Closing phrase detection on agent reply
+                    try:
+                        closing_pattern = re.compile(r"(晚安|明天见|回头见|下次聊|先这样|到此为止|就到这|祝.*好梦|good\s*night|see\s*you)")
+                        if closing_pattern.search(full_reply or ""):
+                            closing_detected = True
+                    except Exception:
+                        pass
                 
+                # If any closing phrase detected this round, stop immediately after yielding current messages
+                if closing_detected:
+                    logger.info("Stopping due to closing phrase detected in agent reply")
+                    yield {"event": "session.stopped", "data": {"session_id": session.id, "reason": "closing_phrase"}}
+                    return
+
                 # ---- Smart stop policy evaluation for this round ----
                 # Compute heat score: length + new participants + question + new mentions
                 length_score = min(len(round_text_total) / 80.0, 1.0)

@@ -113,6 +113,10 @@ export const deleteSessions = async (session_ids: string[]): Promise<void> => {
   await api.post('/sessions/batch-delete', { session_ids });
 };
 
+export const stopSession = async (session_id: string, reason?: string): Promise<void> => {
+  await api.post(`/sessions/${session_id}/stop`, reason ? { reason } : undefined);
+};
+
 export const getMessages = async (session_id: string, limit: number = 50): Promise<Message[]> => {
   const response = await api.get<Message[]>(`/sessions/${session_id}/messages`, {
     params: { limit },
