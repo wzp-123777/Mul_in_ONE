@@ -214,7 +214,8 @@
             :value="buildProgress / 100" 
             size="20px"
             color="secondary"
-            :indeterminate="buildProgress === 0"
+            stripe
+            rounded
           >
             <div class="absolute-full flex flex-center">
               <q-badge color="white" text-color="secondary" :label="`${buildProgress}%`" />
@@ -380,39 +381,69 @@ const buildVectorDatabase = async () => {
     if (expectedDim) {
       url.searchParams.set('expected_dim', String(expectedDim))
     }
+    
     const response = await fetch(url.toString(), { method: 'POST' })
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`)
+    }
+    
+    if (!response.body) {
+      throw new Error('Response body is null')
+    }
 
-    if (response.ok) {
-      const result = await response.json()
-      buildProgress.value = 100
-      
-      const notifyType = result.errors?.length > 0 ? 'warning' : 'positive'
-      const message = result.errors?.length > 0 
-        ? `完成，但有 ${result.errors.length} 个错误`
-        : '向量数据库构建成功'
-      
-      $q.notify({ 
-        type: notifyType, 
-        message,
-        caption: `处理了 ${result.personas_processed} 个 Persona，共 ${result.total_documents} 个文档`,
-        timeout: 3000
-      })
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
 
-      if (result.errors?.length > 0) {
-        console.error('Build errors:', result.errors)
-        $q.notify({
-          type: 'info',
-          message: '查看控制台以获取详细错误信息',
-          timeout: 2000
-        })
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || '' // Keep the last incomplete line in buffer
+      
+      for (const line of lines) {
+        if (!line.trim()) continue
+        try {
+          const data = JSON.parse(line)
+          if (data.progress !== undefined) {
+            buildProgress.value = data.progress
+          }
+          
+          // Handle completion
+          if (data.status === 'completed' || data.status === 'completed_with_errors') {
+            const details = data.details || {}
+            const errors = details.errors || []
+            
+            const notifyType = errors.length > 0 ? 'warning' : 'positive'
+            const message = errors.length > 0 
+              ? `完成，但有 ${errors.length} 个错误`
+              : '向量数据库构建成功'
+            
+            $q.notify({ 
+              type: notifyType, 
+              message,
+              caption: `处理了 ${details.processed} 个 Persona，共 ${details.docs} 个文档`,
+              timeout: 3000
+            })
+
+            if (errors.length > 0) {
+              console.error('Build errors:', errors)
+              $q.notify({
+                type: 'info',
+                message: '查看控制台以获取详细错误信息',
+                timeout: 2000
+              })
+            }
+          } else if (data.status === 'failed') {
+             throw new Error(data.error || 'Unknown error')
+          }
+        } catch (e) {
+          console.warn('Failed to parse progress line:', line, e)
+        }
       }
-    } else {
-      const error = await response.json()
-      $q.notify({ 
-        type: 'negative', 
-        message: '构建失败',
-        caption: error.detail || '未知错误'
-      })
     }
   } catch (e) {
     console.error('Build vector DB error:', e)
