@@ -1,10 +1,10 @@
 """Multi-tenant RAG adapter using NAT's official MilvusRetriever.
 
 This adapter bridges the gap between multi-tenant requirements and NAT's standard components:
-- Dynamically resolves collection names based on tenant_id and persona_id
+- Dynamically resolves collection names based on username and persona_id
 - Creates per-request MilvusRetriever instances for thread safety
-- Resolves tenant-specific embedder configurations from the database
-- Ensures tenant isolation through collection-level separation
+- Resolves user-specific embedder configurations from the database
+- Ensures user isolation through collection-level separation
 """
 
 import logging
@@ -41,7 +41,7 @@ class RagAdapter:
         
         Args:
             embedder_factory: Async callable that returns Embeddings for a given 
-                             (persona_id, tenant_id). Should resolve from DB config.
+                             (persona_id, username). Should resolve from DB config.
             milvus_uri: Milvus connection URI
         """
         self.embedder_factory = embedder_factory
@@ -50,17 +50,17 @@ class RagAdapter:
         self._client = MilvusClient(uri=milvus_uri)
         logger.info(f"RagAdapter initialized with Milvus URI: {milvus_uri}")
 
-    def _get_collection_name(self, tenant_id: str, persona_id: int) -> str:
+    def _get_collection_name(self, username: str, persona_id: int) -> str:
         """Generate collection name following multi-tenant convention.
         
-        Format: {tenant_id}_persona_{persona_id}_rag
+        Format: {username}_persona_{persona_id}_rag
         """
-        return f"{tenant_id}_persona_{persona_id}_rag"
+        return f"{username}_persona_{persona_id}_rag"
 
     async def search(
         self,
         query: str,
-        tenant_id: str,
+        username: str,
         persona_id: int,
         top_k: int = 5,
         filters: Optional[str] = None,
@@ -68,15 +68,15 @@ class RagAdapter:
         """Perform multi-tenant RAG search using NAT's MilvusRetriever.
         
         This method:
-        1. Resolves tenant-specific collection name
-        2. Creates tenant-specific embedder
+        1. Resolves user-specific collection name
+        2. Creates user-specific embedder
         3. Instantiates a new MilvusRetriever (per-request, thread-safe)
         4. Executes search and returns results
         
         Args:
             query: Search query text
-            tenant_id: Tenant identifier for isolation
-            persona_id: Persona identifier within tenant
+            username: User identifier for isolation
+            persona_id: Persona identifier within user
             top_k: Maximum number of results to return
             filters: Optional Milvus filter expression
             
@@ -87,14 +87,14 @@ class RagAdapter:
             CollectionNotFoundError: If the collection doesn't exist
             RetrieverError: On other retrieval errors
         """
-        collection_name = self._get_collection_name(tenant_id, persona_id)
+        collection_name = self._get_collection_name(username, persona_id)
         logger.info(
-            f"RAG search: tenant={tenant_id}, persona={persona_id}, "
+            f"RAG search: user={username}, persona={persona_id}, "
             f"collection={collection_name}, query='{query[:50]}...', top_k={top_k}"
         )
 
-        # Resolve tenant-specific embedder configuration
-        embedder = await self.embedder_factory(persona_id, tenant_id)
+        # Resolve user-specific embedder configuration
+        embedder = await self.embedder_factory(persona_id, username)
 
         # Create per-request retriever instance (lightweight, thread-safe)
         # The shared MilvusClient handles connection pooling
@@ -118,7 +118,7 @@ class RagAdapter:
     async def search_as_documents(
         self,
         query: str,
-        tenant_id: str,
+        username: str,
         persona_id: int,
         top_k: int = 5,
         filters: Optional[str] = None,
@@ -128,7 +128,7 @@ class RagAdapter:
         Wraps search() and converts NAT's RetrieverOutput to Document list
         for backward compatibility with existing code.
         """
-        result = await self.search(query, tenant_id, persona_id, top_k, filters)
+        result = await self.search(query, username, persona_id, top_k, filters)
         
         # Convert NAT Document format to LangChain Document
         documents = []

@@ -9,7 +9,7 @@ from datetime import datetime
 @dataclass(frozen=True)
 class APIProfileRecord:
     id: int
-    tenant_id: str
+    username: str  # Changed from tenant_id
     name: str
     base_url: str
     model: str
@@ -23,7 +23,7 @@ class APIProfileRecord:
 @dataclass(frozen=True)
 class PersonaRecord:
     id: int
-    tenant_id: str
+    username: str  # Changed from tenant_id
     name: str
     handle: str
     prompt: str
@@ -43,8 +43,7 @@ class PersonaRecord:
 @dataclass(frozen=True)
 class SessionRecord:
     id: str
-    tenant_id: str
-    user_id: str
+    username: str  # Changed from tenant_id, removed user_id (merged)
     created_at: datetime
     user_persona: str | None = None
     participants: list[PersonaRecord] | None = None

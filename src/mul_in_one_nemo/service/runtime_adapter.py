@@ -106,16 +106,16 @@ class NemoRuntimeAdapter(RuntimeAdapter):
                 tags.append(persona.name)
         return tags
 
-    async def _ensure_runtime(self, tenant_id: str) -> MultiAgentRuntime:
-        runtime = self._runtimes.get(tenant_id)
+    async def _ensure_runtime(self, username: str) -> MultiAgentRuntime:
+        runtime = self._runtimes.get(username)
         if runtime is not None:
             return runtime
-        lock = self._locks[tenant_id]
+        lock = self._locks[username]
         async with lock:
-            runtime = self._runtimes.get(tenant_id)
+            runtime = self._runtimes.get(username)
             if runtime is not None:
                 return runtime
-            persona_settings = await self._load_persona_settings(tenant_id)
+            persona_settings = await self._load_persona_settings(username)
             resolved_settings = replace(
                 self._settings,
                 memory_window=persona_settings.memory_window or self._settings.memory_window,
@@ -123,48 +123,48 @@ class NemoRuntimeAdapter(RuntimeAdapter):
             )
             runtime = MultiAgentRuntime(resolved_settings, persona_settings.personas)
             await runtime.__aenter__()
-            self._runtimes[tenant_id] = runtime
-            self._persona_cache[tenant_id] = persona_settings
+            self._runtimes[username] = runtime
+            self._persona_cache[username] = persona_settings
             return runtime
 
-    async def _load_persona_settings(self, tenant_id: str) -> PersonaSettings:
-        cached = self._persona_cache.get(tenant_id)
+    async def _load_persona_settings(self, username: str) -> PersonaSettings:
+        cached = self._persona_cache.get(username)
         if cached:
             return cached
 
         if self._persona_repository:
-            settings = await self._persona_repository.load_persona_settings(tenant_id)
+            settings = await self._persona_repository.load_persona_settings(username)
             if settings.personas:
-                self._persona_cache[tenant_id] = settings
+                self._persona_cache[username] = settings
                 return settings
 
         fallback = load_personas(self._settings.persona_file)
         if self._settings.api_configuration:
             apply_api_bindings(fallback.personas, self._settings.api_configuration)
-        self._persona_cache[tenant_id] = fallback
+        self._persona_cache[username] = fallback
         return fallback
 
     async def shutdown(self) -> None:
-        for tenant_id, runtime in list(self._runtimes.items()):
+        for username, runtime in list(self._runtimes.items()):
             with contextlib.suppress(Exception):
                 await runtime.__aexit__(None, None, None)
-            self._runtimes.pop(tenant_id, None)
+            self._runtimes.pop(username, None)
         self._persona_cache.clear()
         self._locks.clear()
 
     async def invoke_stream(self, session: SessionRecord, message: SessionMessage) -> AsyncIterator[Dict]:
         """Drives a multi-agent conversation turn, yielding structured events."""
-        tenant_id = session.tenant_id or "default"
-        runtime = await self._ensure_runtime(tenant_id)
-        persona_settings = self._persona_cache[tenant_id]
-        logger.info(f"RuntimeAdapter.invoke_stream called for tenant {tenant_id}, session {session.id}")
+        username = session.username or "default"
+        runtime = await self._ensure_runtime(username)
+        persona_settings = self._persona_cache[username]
+        logger.info(f"RuntimeAdapter.invoke_stream called for user {username}, session {session.id}")
         logger.info(f"Persona settings loaded: {len(persona_settings.personas)} personas")
 
         # Set RAG context for this invocation (thread-safe via contextvars)
-        # This allows RAG tools to access tenant/persona without LLM exposure
+        # This allows RAG tools to access user/persona without LLM exposure
         # Context will be available to all async operations in this task
         # Note: We'll update persona_id per speaker during the conversation loop
-        set_rag_context(tenant_id=tenant_id, persona_id=None)
+        set_rag_context(username=username, persona_id=None)
         
         try:
             # Create a mapping from persona name to persona object for easy lookup
@@ -256,7 +256,7 @@ class NemoRuntimeAdapter(RuntimeAdapter):
                     # Update RAG context with current persona's ID
                     # This makes it available to any RAG tool calls during this persona's turn
                     if persona_id:
-                        set_rag_context(tenant_id=tenant_id, persona_id=persona_id)
+                        set_rag_context(username=username, persona_id=persona_id)
 
                     # Construct payload with appropriate context
                     # In the first exchange round, ALL selected speakers respond to the user's original message

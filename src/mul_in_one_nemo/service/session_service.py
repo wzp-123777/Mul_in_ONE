@@ -192,14 +192,13 @@ class SessionService:
 
     async def create_session(
         self,
-        tenant_id: str,
-        user_id: str,
+        username: str,
         *,
         user_persona: str | None = None,
         initial_persona_ids: List[int] | None = None,
     ) -> str:
         record = await self._repository.create(
-            tenant_id, user_id, user_persona=user_persona, initial_persona_ids=initial_persona_ids or []
+            username, user_persona=user_persona, initial_persona_ids=initial_persona_ids or []
         )
         self._ensure_runtime(record)
         return record.id

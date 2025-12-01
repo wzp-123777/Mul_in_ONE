@@ -13,28 +13,22 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.create_table(
-        "tenants",
-        sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("name", sa.String(length=128), nullable=False, unique=True),
-        sa.Column("plan", sa.String(length=32), nullable=False, server_default=sa.text("'free'")),
-        sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
-    )
-
+    # Merged tenant+user into single 'users' table
     op.create_table(
         "users",
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("tenant_id", sa.Integer(), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("email", sa.String(length=255), nullable=False),
+        sa.Column("username", sa.String(length=128), nullable=False, unique=True),
+        sa.Column("email", sa.String(length=255), nullable=True),
+        sa.Column("password_hash", sa.String(length=255), nullable=True),
+        sa.Column("display_name", sa.String(length=128), nullable=True),
         sa.Column("role", sa.String(length=32), nullable=False, server_default=sa.text("'member'")),
         sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
-        sa.UniqueConstraint("tenant_id", "email", name="uq_user_tenant_email"),
     )
 
     op.create_table(
         "api_profiles",
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("tenant_id", sa.Integer(), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("user_id", sa.Integer(), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
         sa.Column("name", sa.String(length=64), nullable=False),
         sa.Column("base_url", sa.String(length=255), nullable=False),
         sa.Column("model", sa.String(length=255), nullable=False),
@@ -47,7 +41,7 @@ def upgrade() -> None:
     op.create_table(
         "personas",
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("tenant_id", sa.Integer(), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("user_id", sa.Integer(), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
         sa.Column("name", sa.String(length=128), nullable=False),
         sa.Column("handle", sa.String(length=128), nullable=False),
         sa.Column("prompt", sa.Text(), nullable=False),
@@ -62,8 +56,7 @@ def upgrade() -> None:
     op.create_table(
         "sessions",
         sa.Column("id", sa.String(length=64), primary_key=True),
-        sa.Column("tenant_id", sa.Integer(), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("user_id", sa.Integer(), sa.ForeignKey("users.id"), nullable=False),
+        sa.Column("user_id", sa.Integer(), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
         sa.Column("status", sa.String(length=32), nullable=False, server_default=sa.text("'active'")),
         sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
     )
@@ -85,4 +78,3 @@ def downgrade() -> None:
     op.drop_table("personas")
     op.drop_table("api_profiles")
     op.drop_table("users")
-    op.drop_table("tenants")

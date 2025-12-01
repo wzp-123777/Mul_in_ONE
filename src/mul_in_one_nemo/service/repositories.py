@@ -23,7 +23,6 @@ from mul_in_one_nemo.db.models import APIProfile as APIProfileRow
 from mul_in_one_nemo.db.models import Persona as PersonaRow
 from mul_in_one_nemo.db.models import Session as SessionRow
 from mul_in_one_nemo.db.models import SessionMessage as SessionMessageRow
-from mul_in_one_nemo.db.models import Tenant as TenantRow
 from mul_in_one_nemo.db.models import User as UserRow
 from mul_in_one_nemo.persona import Persona, PersonaAPIConfig, PersonaSettings
 from mul_in_one_nemo.service.models import (
@@ -41,7 +40,7 @@ class SessionRepository(ABC):
     """Abstract repository responsible for session persistence."""
 
     @abstractmethod
-    async def create(self, tenant_id: str, user_id: str,
+    async def create(self, username: str,
                      *, user_persona: str | None = None,
                      initial_persona_ids: List[int] = []) -> SessionRecord: ...
 
@@ -49,7 +48,7 @@ class SessionRepository(ABC):
     async def get(self, session_id: str) -> Optional[SessionRecord]: ...
 
     @abstractmethod
-    async def list_sessions(self, tenant_id: str, user_id: str) -> List[SessionRecord]: ...
+    async def list_sessions(self, username: str) -> List[SessionRecord]: ...
 
     @abstractmethod
     async def add_message(self, session_id: str, sender: str, content: str) -> MessageRecord: ...
@@ -100,23 +99,6 @@ class BaseSQLAlchemyRepository:
         finally:
             await session.close()
 
-    async def _get_or_create_tenant(self, db: AsyncSession, tenant_name: str) -> TenantRow:
-        stmt = select(TenantRow).where(TenantRow.name == tenant_name)
-        tenant = (await db.execute(stmt)).scalar_one_or_none()
-        if tenant:
-            return tenant
-        tenant = TenantRow(name=tenant_name)
-        db.add(tenant)
-        await db.flush()
-        return tenant
-
-    async def _get_tenant(self, db: AsyncSession, tenant_name: str) -> TenantRow:
-        stmt = select(TenantRow).where(TenantRow.name == tenant_name)
-        tenant = (await db.execute(stmt)).scalar_one_or_none()
-        if tenant is None:
-            raise ValueError("Tenant not found")
-        return tenant
-
 
 class InMemorySessionRepository(SessionRepository):
     """In-memory session store with async locks for concurrency safety."""
@@ -126,18 +108,18 @@ class InMemorySessionRepository(SessionRepository):
         self._messages: Dict[str, Deque[MessageRecord]] = defaultdict(deque)
         self._lock = asyncio.Lock()
 
-    async def create(self, tenant_id: str, user_id: str,
+    async def create(self, username: str,
                      *, user_persona: str | None = None,
                      initial_persona_ids: List[int] = []) -> SessionRecord:
         async with self._lock:
-            session_id = f"sess_{tenant_id}_{uuid.uuid4().hex[:8]}"
+            session_id = f"sess_{username}_{uuid.uuid4().hex[:8]}"
             participants = []
             if initial_persona_ids:
                 for pid in initial_persona_ids:
                     participants.append(
                         PersonaRecord(
                             id=pid,
-                            tenant_id=tenant_id,
+                            username=username,
                             name=f"persona_{pid}",
                             handle=f"persona_{pid}",
                             prompt="",
@@ -151,8 +133,7 @@ class InMemorySessionRepository(SessionRepository):
 
             record = SessionRecord(
                 id=session_id,
-                tenant_id=tenant_id,
-                user_id=user_id,
+                username=username,
                 created_at=datetime.now(timezone.utc),
                 user_persona=user_persona,
                 participants=participants or None,
@@ -164,11 +145,11 @@ class InMemorySessionRepository(SessionRepository):
         async with self._lock:
             return self._records.get(session_id)
 
-    async def list_sessions(self, tenant_id: str, user_id: str) -> List[SessionRecord]:
+    async def list_sessions(self, username: str) -> List[SessionRecord]:
         async with self._lock:
             return [
                 r for r in self._records.values() 
-                if r.tenant_id == tenant_id and r.user_id == user_id
+                if r.username == username
             ]
 
     async def add_message(self, session_id: str, sender: str, content: str) -> MessageRecord:
@@ -199,8 +180,7 @@ class InMemorySessionRepository(SessionRepository):
                 raise ValueError("Session not found")
             updated = SessionRecord(
                 id=record.id,
-                tenant_id=record.tenant_id,
-                user_id=record.user_id,
+                username=record.username,
                 created_at=record.created_at,
                 user_persona=user_persona,
                 participants=record.participants,
@@ -218,7 +198,7 @@ class InMemorySessionRepository(SessionRepository):
                 participants.append(
                     PersonaRecord(
                         id=pid,
-                        tenant_id=record.tenant_id,
+                        username=record.username,
                         name=f"persona_{pid}",
                         handle=f"persona_{pid}",
                         prompt="",
@@ -232,8 +212,7 @@ class InMemorySessionRepository(SessionRepository):
 
             updated = SessionRecord(
                 id=record.id,
-                tenant_id=record.tenant_id,
-                user_id=record.user_id,
+                username=record.username,
                 created_at=record.created_at,
                 user_persona=record.user_persona,
                 participants=participants,
@@ -256,8 +235,7 @@ class InMemorySessionRepository(SessionRepository):
                 raise ValueError("Session not found")
             updated = SessionRecord(
                 id=record.id,
-                tenant_id=record.tenant_id,
-                user_id=record.user_id,
+                username=record.username,
                 created_at=record.created_at,
                 user_persona=user_persona if user_persona is not None else record.user_persona,
                 participants=record.participants,
@@ -288,12 +266,12 @@ class PersonaDataRepository(ABC):
     """Repository responsible for persona and API profile persistence."""
 
     @abstractmethod
-    async def get_api_profile(self, tenant_id: str, profile_id: int) -> APIProfileRecord | None: ...
+    async def get_api_profile(self, username: str, profile_id: int) -> APIProfileRecord | None: ...
 
     @abstractmethod
     async def create_api_profile(
         self,
-        tenant_id: str,
+        username: str,
         name: str,
         base_url: str,
         model: str,
@@ -305,12 +283,12 @@ class PersonaDataRepository(ABC):
         ...
 
     @abstractmethod
-    async def list_api_profiles(self, tenant_id: str) -> List[APIProfileRecord]: ...
+    async def list_api_profiles(self, username: str) -> List[APIProfileRecord]: ...
 
     @abstractmethod
     async def update_api_profile(
         self,
-        tenant_id: str,
+        username: str,
         profile_id: int,
         *,
         name: str | None = None,
@@ -324,15 +302,15 @@ class PersonaDataRepository(ABC):
         ...
 
     @abstractmethod
-    async def delete_api_profile(self, tenant_id: str, profile_id: int) -> None: ...
+    async def delete_api_profile(self, username: str, profile_id: int) -> None: ...
 
     @abstractmethod
-    async def get_persona(self, tenant_id: str, persona_id: int) -> PersonaRecord | None: ...
+    async def get_persona(self, username: str, persona_id: int) -> PersonaRecord | None: ...
 
     @abstractmethod
     async def create_persona(
         self,
-        tenant_id: str,
+        username: str,
         name: str,
         prompt: str,
         handle: str | None,
@@ -347,12 +325,12 @@ class PersonaDataRepository(ABC):
         ...
 
     @abstractmethod
-    async def list_personas(self, tenant_id: str) -> List[PersonaRecord]: ...
+    async def list_personas(self, username: str) -> List[PersonaRecord]: ...
 
     @abstractmethod
     async def update_persona(
         self,
-        tenant_id: str,
+        username: str,
         persona_id: int,
         *,
         name: str | None = None,
@@ -369,19 +347,19 @@ class PersonaDataRepository(ABC):
         ...
 
     @abstractmethod
-    async def delete_persona(self, tenant_id: str, persona_id: int) -> None: ...
+    async def delete_persona(self, username: str, persona_id: int) -> None: ...
 
     @abstractmethod
-    async def load_persona_settings(self, tenant_id: str) -> PersonaSettings: ...
+    async def load_persona_settings(self, username: str) -> PersonaSettings: ...
 
     @abstractmethod
-    async def get_tenant_embedding_config(self, tenant_id: str) -> dict: ...
+    async def get_user_embedding_config(self, username: str) -> dict: ...
 
     @abstractmethod
-    async def update_tenant_embedding_config(self, tenant_id: str, api_profile_id: int | None) -> dict: ...
+    async def update_user_embedding_config(self, username: str, api_profile_id: int | None) -> dict: ...
 
     @abstractmethod
-    async def get_embedding_api_config_for_tenant(self, tenant_id: str) -> dict | None: ...
+    async def get_embedding_api_config_for_user(self, username: str) -> dict | None: ...
 
 
 class SQLAlchemySessionRepository(SessionRepository, BaseSQLAlchemyRepository):
@@ -393,18 +371,16 @@ class SQLAlchemySessionRepository(SessionRepository, BaseSQLAlchemyRepository):
         self._persona_data_repository = persona_data_repository
 
 
-    async def create(self, tenant_id: str, user_id: str,
+    async def create(self, username: str,
                      *, user_persona: str | None = None,
                      initial_persona_ids: List[int] = []) -> SessionRecord:
         async with self._session_scope() as db:
             logger.info(
-                "Creating session (tenant=%s user=%s personas=%s)",
-                tenant_id,
-                user_id,
+                "Creating session (username=%s personas=%s)",
+                username,
                 initial_persona_ids,
             )
-            tenant = await self._get_or_create_tenant(db, tenant_id)
-            user = await self._get_or_create_user(db, tenant, user_id)
+            user = await self._get_user_by_username(db, username)
             
             initial_participants = []
             if initial_persona_ids:
@@ -414,23 +390,21 @@ class SQLAlchemySessionRepository(SessionRepository, BaseSQLAlchemyRepository):
                     raise ValueError("One or more initial personas not found")
 
             session_row = SessionRow(
-                id=self._generate_session_id(tenant_id),
-                tenant_id=tenant.id,
+                id=self._generate_session_id(username),
                 user_id=user.id,
                 status="active",
                 user_persona=user_persona,
-                participants=initial_participants, # Set initial participants
+                participants=initial_participants,
             )
             db.add(session_row)
             await db.flush()
             logger.info("Session created: %s", session_row.id)
-            return self._to_session_record(session_row, tenant.name, user.email, session_row.participants)
+            return self._to_session_record(session_row, user.username, session_row.participants)
 
     async def get(self, session_id: str) -> Optional[SessionRecord]:
         async with self._session_scope() as db:
             stmt = (
-                select(SessionRow, TenantRow.name, UserRow.email)
-                .join(TenantRow, SessionRow.tenant_id == TenantRow.id)
+                select(SessionRow, UserRow.username)
                 .join(UserRow, SessionRow.user_id == UserRow.id)
                 .where(SessionRow.id == session_id)
                 .options(selectinload(SessionRow.participants))
@@ -440,18 +414,17 @@ class SQLAlchemySessionRepository(SessionRepository, BaseSQLAlchemyRepository):
             if row is None:
                 logger.info("Session not found: %s", session_id)
                 return None
-            session_row, tenant_name, user_email = row
-            return self._to_session_record(session_row, tenant_name, user_email, session_row.participants)
+            session_row, username = row
+            return self._to_session_record(session_row, username, session_row.participants)
 
-    async def list_sessions(self, tenant_id: str, user_id: str) -> List[SessionRecord]:
+    async def list_sessions(self, username: str) -> List[SessionRecord]:
         async with self._session_scope() as db:
-            logger.info("Listing sessions for tenant=%s user=%s", tenant_id, user_id)
+            logger.info("Listing sessions for username=%s", username)
             try:
                 stmt = (
-                    select(SessionRow, TenantRow.name, UserRow.email)
-                    .join(TenantRow, SessionRow.tenant_id == TenantRow.id)
+                    select(SessionRow, UserRow.username)
                     .join(UserRow, SessionRow.user_id == UserRow.id)
-                    .where(TenantRow.name == tenant_id, UserRow.email == user_id)
+                    .where(UserRow.username == username)
                     .order_by(SessionRow.created_at.desc())
                     .options(selectinload(SessionRow.participants))
                 )
@@ -459,11 +432,11 @@ class SQLAlchemySessionRepository(SessionRepository, BaseSQLAlchemyRepository):
                 results = rows.all()
                 logger.info("list_sessions returned %s rows", len(results))
                 return [
-                    self._to_session_record(session_row, tenant_name, user_email, session_row.participants)
-                    for session_row, tenant_name, user_email in results
+                    self._to_session_record(session_row, username, session_row.participants)
+                    for session_row, _ in results
                 ]
             except Exception:
-                logger.exception("Failed to list sessions for tenant=%s user=%s", tenant_id, user_id)
+                logger.exception("Failed to list sessions for username=%s", username)
                 raise
 
 
@@ -501,8 +474,7 @@ class SQLAlchemySessionRepository(SessionRepository, BaseSQLAlchemyRepository):
     async def update_user_persona(self, session_id: str, user_persona: str | None) -> SessionRecord:
         async with self._session_scope() as db:
             stmt = (
-                select(SessionRow, TenantRow.name, UserRow.email)
-                .join(TenantRow, SessionRow.tenant_id == TenantRow.id)
+                select(SessionRow, UserRow.username)
                 .join(UserRow, SessionRow.user_id == UserRow.id)
                 .where(SessionRow.id == session_id)
             )
@@ -510,18 +482,17 @@ class SQLAlchemySessionRepository(SessionRepository, BaseSQLAlchemyRepository):
             row = result.first()
             if row is None:
                 raise ValueError("Session not found")
-            session_row, tenant_name, user_email = row
+            session_row, username = row
             session_row.user_persona = user_persona
             db.add(session_row)
             await db.flush()
             logger.info("Updated user_persona for session=%s", session_id)
-            return self._to_session_record(session_row, tenant_name, user_email, session_row.participants)
+            return self._to_session_record(session_row, username, session_row.participants)
 
     async def update_session_participants(self, session_id: str, persona_ids: List[int]) -> SessionRecord:
         async with self._session_scope() as db:
             stmt = (
-                select(SessionRow, TenantRow.name, UserRow.email)
-                .join(TenantRow, SessionRow.tenant_id == TenantRow.id)
+                select(SessionRow, UserRow.username)
                 .join(UserRow, SessionRow.user_id == UserRow.id)
                 .where(SessionRow.id == session_id)
                 .options(selectinload(SessionRow.participants))
@@ -530,7 +501,7 @@ class SQLAlchemySessionRepository(SessionRepository, BaseSQLAlchemyRepository):
             row = result.first()
             if row is None:
                 raise ValueError("Session not found")
-            session_row, tenant_name, user_email = row
+            session_row, username = row
 
             unique_ids: List[int] = []
             seen: set[int] = set()
@@ -550,7 +521,7 @@ class SQLAlchemySessionRepository(SessionRepository, BaseSQLAlchemyRepository):
                     select(PersonaRow)
                     .where(
                         PersonaRow.id.in_(unique_ids),
-                        PersonaRow.tenant_id == session_row.tenant_id,
+                        PersonaRow.user_id == session_row.user_id,
                     )
                 )
                 persona_rows = list((await db.execute(persona_stmt)).scalars())
@@ -563,7 +534,7 @@ class SQLAlchemySessionRepository(SessionRepository, BaseSQLAlchemyRepository):
             db.add(session_row)
             await db.flush()
             logger.info("Session participants updated session=%s count=%s", session_id, len(participants))
-            return self._to_session_record(session_row, tenant_name, user_email, participants)
+            return self._to_session_record(session_row, username, participants)
 
     async def update_session_metadata(
         self,
@@ -576,8 +547,7 @@ class SQLAlchemySessionRepository(SessionRepository, BaseSQLAlchemyRepository):
     ) -> SessionRecord:
         async with self._session_scope() as db:
             stmt = (
-                select(SessionRow, TenantRow.name, UserRow.email)
-                .join(TenantRow, SessionRow.tenant_id == TenantRow.id)
+                select(SessionRow, UserRow.username)
                 .join(UserRow, SessionRow.user_id == UserRow.id)
                 .where(SessionRow.id == session_id)
                 .options(selectinload(SessionRow.participants))
@@ -586,7 +556,7 @@ class SQLAlchemySessionRepository(SessionRepository, BaseSQLAlchemyRepository):
             row = result.first()
             if row is None:
                 raise ValueError("Session not found")
-            session_row, tenant_name, user_email = row
+            session_row, username = row
             if title is not None:
                 session_row.title = title
             if user_display_name is not None:
@@ -597,7 +567,7 @@ class SQLAlchemySessionRepository(SessionRepository, BaseSQLAlchemyRepository):
                 session_row.user_persona = user_persona
             db.add(session_row)
             await db.flush()
-            return self._to_session_record(session_row, tenant_name, user_email, session_row.participants)
+            return self._to_session_record(session_row, username, session_row.participants)
 
     async def delete_session(self, session_id: str) -> None:
         async with self._session_scope() as db:
@@ -623,22 +593,12 @@ class SQLAlchemySessionRepository(SessionRepository, BaseSQLAlchemyRepository):
                 logger.warning("No sessions found for batch deletion")
 
     @staticmethod
-    def _generate_session_id(tenant_id: str) -> str:
-        return f"sess_{tenant_id}_{uuid.uuid4().hex[:8]}"
+    def _generate_session_id(username: str) -> str:
+        return f"sess_{username}_{uuid.uuid4().hex[:8]}"
 
     @staticmethod
     def _generate_message_id() -> str:
         return f"msg_{uuid.uuid4().hex[:8]}"
-
-    async def _get_or_create_user(self, db: AsyncSession, tenant: TenantRow, user_key: str) -> UserRow:
-        stmt = select(UserRow).where(UserRow.email == user_key)
-        user = (await db.execute(stmt)).scalar_one_or_none()
-        if user:
-            return user
-        user = UserRow(tenant_id=tenant.id, email=user_key)
-        db.add(user)
-        await db.flush()
-        return user
 
     @staticmethod
     def _resolve_sender_type(sender: str) -> str:
@@ -648,18 +608,16 @@ class SQLAlchemySessionRepository(SessionRepository, BaseSQLAlchemyRepository):
     def _to_session_record(
         self,
         row: SessionRow,
-        tenant_name: str,
-        user_email: str,
+        username: str,
         participants_rows: List[PersonaRow] | None = None,
     ) -> SessionRecord:
         participants = participants_rows if participants_rows is not None else list(row.participants)
         return SessionRecord(
             id=row.id,
-            tenant_id=tenant_name,
-            user_id=user_email,
+            username=username,
             created_at=self._normalize_dt(row.created_at),
             user_persona=row.user_persona,
-            participants=[SQLAlchemyPersonaRepository._to_persona_record(p, tenant_name, None) for p in participants],
+            participants=[SQLAlchemyPersonaRepository._to_persona_record(p, username, None) for p in participants],
             title=getattr(row, "title", None),
             user_display_name=getattr(row, "user_display_name", None),
             user_handle=getattr(row, "user_handle", None),
@@ -682,6 +640,18 @@ class SQLAlchemySessionRepository(SessionRepository, BaseSQLAlchemyRepository):
             return value.replace(tzinfo=timezone.utc)
         return value.astimezone(timezone.utc)
 
+    async def _get_user_by_username(self, db: AsyncSession, username: str) -> UserRow:
+        """Get user by username, raise ValueError if not found."""
+        stmt = select(UserRow).where(UserRow.username == username)
+        result = await db.execute(stmt)
+        user = result.scalar_one_or_none()
+        if not user:
+            raise ValueError(f"User '{username}' not found")
+        return user
+
+    def _generate_session_id(self, username: str) -> str:
+        return f"sess_{username}_{uuid.uuid4().hex[:8]}"
+
 
 class SQLAlchemyPersonaRepository(PersonaDataRepository, BaseSQLAlchemyRepository):
     """Repository that manages API profiles and personas inside the database."""
@@ -703,7 +673,7 @@ class SQLAlchemyPersonaRepository(PersonaDataRepository, BaseSQLAlchemyRepositor
 
     async def create_api_profile(
         self,
-        tenant_id: str,
+        username: str,
         name: str,
         base_url: str,
         model: str,
@@ -713,11 +683,11 @@ class SQLAlchemyPersonaRepository(PersonaDataRepository, BaseSQLAlchemyRepositor
         embedding_dim: int | None = None,
     ) -> APIProfileRecord:
         async with self._session_scope() as db:
-            logger.info("Creating API profile '%s' for tenant=%s", name, tenant_id)
-            tenant = await self._get_or_create_tenant(db, tenant_id)
+            logger.info("Creating API profile '%s' for user=%s", name, username)
+            user = await self._get_user_by_username(db, username)
             cipher = self._encrypt_api_key(api_key)
             profile = APIProfileRow(
-                tenant_id=tenant.id,
+                user_id=user.id,
                 name=name,
                 base_url=base_url,
                 model=model,
@@ -728,56 +698,56 @@ class SQLAlchemyPersonaRepository(PersonaDataRepository, BaseSQLAlchemyRepositor
             )
             db.add(profile)
             await db.flush()
-            logger.info("API profile created id=%s tenant=%s", profile.id, tenant_id)
-            return self._to_api_profile_record(profile, tenant.name, decrypted_key=api_key)
+            logger.info("API profile created id=%s user=%s", profile.id, username)
+            return self._to_api_profile_record(profile, username, decrypted_key=api_key)
 
-    async def list_api_profiles(self, tenant_id: str) -> List[APIProfileRecord]:
+    async def list_api_profiles(self, username: str) -> List[APIProfileRecord]:
         async with self._session_scope() as db:
-            logger.info("Listing API profiles for tenant=%s", tenant_id)
+            logger.info("Listing API profiles for user=%s", username)
             stmt = (
-                select(APIProfileRow, TenantRow.name)
-                .join(TenantRow, APIProfileRow.tenant_id == TenantRow.id)
-                .where(TenantRow.name == tenant_id)
+                select(APIProfileRow, UserRow.username)
+                .join(UserRow, APIProfileRow.user_id == UserRow.id)
+                .where(UserRow.username == username)
                 .order_by(APIProfileRow.created_at.desc())
             )
             rows = await db.execute(stmt)
             records: List[APIProfileRecord] = []
-            for profile, tenant_name in rows.all():
-                records.append(self._to_api_profile_record(profile, tenant_name))
+            for profile, username_val in rows.all():
+                records.append(self._to_api_profile_record(profile, username_val))
             return records
 
-    async def get_api_profile(self, tenant_id: str, profile_id: int) -> APIProfileRecord | None:
+    async def get_api_profile(self, username: str, profile_id: int) -> APIProfileRecord | None:
         async with self._session_scope() as db:
-            logger.info("Fetching API profile id=%s tenant=%s", profile_id, tenant_id)
+            logger.info("Fetching API profile id=%s user=%s", profile_id, username)
             stmt = (
-                select(APIProfileRow, TenantRow.name)
-                .join(TenantRow, APIProfileRow.tenant_id == TenantRow.id)
-                .where(TenantRow.name == tenant_id, APIProfileRow.id == profile_id)
+                select(APIProfileRow, UserRow.username)
+                .join(UserRow, APIProfileRow.user_id == UserRow.id)
+                .where(UserRow.username == username, APIProfileRow.id == profile_id)
             )
             result = await db.execute(stmt)
             row = result.first()
             if row is None:
                 return None
-            profile, tenant_name = row
-            return self._to_api_profile_record(profile, tenant_name)
+            profile, username_val = row
+            return self._to_api_profile_record(profile, username_val)
 
-    async def get_api_profile_with_key(self, tenant_id: str, profile_id: int) -> dict | None:
+    async def get_api_profile_with_key(self, username: str, profile_id: int) -> dict | None:
         """Fetch API profile with decrypted key for internal use (e.g., health checks)."""
         async with self._session_scope() as db:
-            logger.info("Fetching API profile with key id=%s tenant=%s", profile_id, tenant_id)
+            logger.info("Fetching API profile with key id=%s user=%s", profile_id, username)
             stmt = (
-                select(APIProfileRow, TenantRow.name)
-                .join(TenantRow, APIProfileRow.tenant_id == TenantRow.id)
-                .where(TenantRow.name == tenant_id, APIProfileRow.id == profile_id)
+                select(APIProfileRow, UserRow.username)
+                .join(UserRow, APIProfileRow.user_id == UserRow.id)
+                .where(UserRow.username == username, APIProfileRow.id == profile_id)
             )
             result = await db.execute(stmt)
             row = result.first()
             if row is None:
                 return None
-            profile, tenant_name = row
+            profile, username_val = row
             return {
                 "id": profile.id,
-                "tenant_id": tenant_name,
+                "username": username_val,
                 "name": profile.name,
                 "base_url": profile.base_url,
                 "model": profile.model,
@@ -787,7 +757,7 @@ class SQLAlchemyPersonaRepository(PersonaDataRepository, BaseSQLAlchemyRepositor
 
     async def update_api_profile(
         self,
-        tenant_id: str,
+        username: str,
         profile_id: int,
         *,
         name: str | None = None,
@@ -799,9 +769,9 @@ class SQLAlchemyPersonaRepository(PersonaDataRepository, BaseSQLAlchemyRepositor
         embedding_dim: int | None = None,
     ) -> APIProfileRecord:
         async with self._session_scope() as db:
-            logger.info("Updating API profile id=%s tenant=%s", profile_id, tenant_id)
-            tenant = await self._get_tenant(db, tenant_id)
-            profile = await self._assert_profile_owned(db, tenant.id, profile_id)
+            logger.info("Updating API profile id=%s user=%s", profile_id, username)
+            user = await self._get_user_by_username(db, username)
+            profile = await self._assert_profile_owned(db, user.id, profile_id)
             if name is not None:
                 profile.name = name
             if base_url is not None:
@@ -819,14 +789,14 @@ class SQLAlchemyPersonaRepository(PersonaDataRepository, BaseSQLAlchemyRepositor
                 decrypted_key = api_key or None
                 profile.api_key_cipher = self._encrypt_api_key(api_key)
             await db.flush()
-            logger.info("API profile updated id=%s tenant=%s", profile.id, tenant_id)
-            return self._to_api_profile_record(profile, tenant.name, decrypted_key=decrypted_key)
+            logger.info("API profile updated id=%s user=%s", profile.id, username)
+            return self._to_api_profile_record(profile, username, decrypted_key=decrypted_key)
 
-    async def delete_api_profile(self, tenant_id: str, profile_id: int) -> None:
+    async def delete_api_profile(self, username: str, profile_id: int) -> None:
         async with self._session_scope() as db:
-            logger.info("Deleting API profile id=%s tenant=%s", profile_id, tenant_id)
-            tenant = await self._get_tenant(db, tenant_id)
-            profile = await self._assert_profile_owned(db, tenant.id, profile_id)
+            logger.info("Deleting API profile id=%s user=%s", profile_id, username)
+            user = await self._get_user_by_username(db, username)
+            profile = await self._assert_profile_owned(db, user.id, profile_id)
             await db.execute(
                 update(PersonaRow)
                 .where(PersonaRow.api_profile_id == profile.id)
@@ -836,7 +806,7 @@ class SQLAlchemyPersonaRepository(PersonaDataRepository, BaseSQLAlchemyRepositor
 
     async def create_persona(
         self,
-        tenant_id: str,
+        username: str,
         name: str,
         prompt: str,
         handle: str | None,
@@ -849,20 +819,20 @@ class SQLAlchemyPersonaRepository(PersonaDataRepository, BaseSQLAlchemyRepositor
         background: str | None = None,
     ) -> PersonaRecord:
         async with self._session_scope() as db:
-            logger.info("Creating persona '%s' for tenant=%s", name, tenant_id)
-            tenant = await self._get_or_create_tenant(db, tenant_id)
+            logger.info("Creating persona '%s' for user=%s", name, username)
+            user = await self._get_user_by_username(db, username)
             profile = None
             if api_profile_id is not None:
-                profile = await self._assert_profile_owned(db, tenant.id, api_profile_id)
+                profile = await self._assert_profile_owned(db, user.id, api_profile_id)
             normalized_handle = self._normalize_handle(handle, name)
             if is_default:
                 await db.execute(
                     update(PersonaRow)
-                    .where(PersonaRow.tenant_id == tenant.id)
+                    .where(PersonaRow.user_id == user.id)
                     .values(is_default=False)
                 )
             persona = PersonaRow(
-                tenant_id=tenant.id,
+                user_id=user.id,
                 name=name,
                 handle=normalized_handle,
                 prompt=prompt,
@@ -876,32 +846,32 @@ class SQLAlchemyPersonaRepository(PersonaDataRepository, BaseSQLAlchemyRepositor
             )
             db.add(persona)
             await db.flush()
-            logger.info("Persona created id=%s tenant=%s", persona.id, tenant_id)
-            return self._to_persona_record(persona, tenant.name, profile)
+            logger.info("Persona created id=%s user=%s", persona.id, username)
+            return self._to_persona_record(persona, username, profile)
 
-    async def list_personas(self, tenant_id: str) -> List[PersonaRecord]:
+    async def list_personas(self, username: str) -> List[PersonaRecord]:
         async with self._session_scope() as db:
-            logger.info("Listing personas for tenant=%s", tenant_id)
+            logger.info("Listing personas for user=%s", username)
             stmt = (
-                select(PersonaRow, TenantRow.name, APIProfileRow)
-                .join(TenantRow, PersonaRow.tenant_id == TenantRow.id)
+                select(PersonaRow, UserRow.username, APIProfileRow)
+                .join(UserRow, PersonaRow.user_id == UserRow.id)
                 .outerjoin(APIProfileRow, PersonaRow.api_profile_id == APIProfileRow.id)
-                .where(TenantRow.name == tenant_id)
+                .where(UserRow.username == username)
                 .order_by(PersonaRow.id.asc())
             )
             rows = await db.execute(stmt)
             records: List[PersonaRecord] = []
-            for persona, tenant_name, profile in rows.all():
-                records.append(self._to_persona_record(persona, tenant_name, profile))
+            for persona, username_val, profile in rows.all():
+                records.append(self._to_persona_record(persona, username_val, profile))
             return records
 
     async def get_persona_by_id(self, persona_id: int) -> PersonaRecord | None:
-        """Fetch a persona by ID without requiring tenant_id (for internal use)."""
+        """Fetch a persona by ID without requiring username (for internal use)."""
         async with self._session_scope() as db:
             logger.info("Fetching persona by id=%s", persona_id)
             stmt = (
-                select(PersonaRow, TenantRow.name, APIProfileRow)
-                .join(TenantRow, PersonaRow.tenant_id == TenantRow.id)
+                select(PersonaRow, UserRow.username, APIProfileRow)
+                .join(UserRow, PersonaRow.user_id == UserRow.id)
                 .outerjoin(APIProfileRow, PersonaRow.api_profile_id == APIProfileRow.id)
                 .where(PersonaRow.id == persona_id)
             )
@@ -909,28 +879,28 @@ class SQLAlchemyPersonaRepository(PersonaDataRepository, BaseSQLAlchemyRepositor
             row = result.first()
             if row is None:
                 return None
-            persona, tenant_name, profile = row
-            return self._to_persona_record(persona, tenant_name, profile)
+            persona, username, profile = row
+            return self._to_persona_record(persona, username, profile)
 
-    async def get_persona(self, tenant_id: str, persona_id: int) -> PersonaRecord | None:
+    async def get_persona(self, username: str, persona_id: int) -> PersonaRecord | None:
         async with self._session_scope() as db:
-            logger.info("Fetching persona id=%s tenant=%s", persona_id, tenant_id)
+            logger.info("Fetching persona id=%s user=%s", persona_id, username)
             stmt = (
-                select(PersonaRow, TenantRow.name, APIProfileRow)
-                .join(TenantRow, PersonaRow.tenant_id == TenantRow.id)
+                select(PersonaRow, UserRow.username, APIProfileRow)
+                .join(UserRow, PersonaRow.user_id == UserRow.id)
                 .outerjoin(APIProfileRow, PersonaRow.api_profile_id == APIProfileRow.id)
-                .where(TenantRow.name == tenant_id, PersonaRow.id == persona_id)
+                .where(UserRow.username == username, PersonaRow.id == persona_id)
             )
             result = await db.execute(stmt)
             row = result.first()
             if row is None:
                 return None
-            persona, tenant_name, profile = row
-            return self._to_persona_record(persona, tenant_name, profile)
+            persona, username_val, profile = row
+            return self._to_persona_record(persona, username_val, profile)
 
     async def update_persona(
         self,
-        tenant_id: str,
+        username: str,
         persona_id: int,
         *,
         name: str | None = None,
@@ -945,13 +915,13 @@ class SQLAlchemyPersonaRepository(PersonaDataRepository, BaseSQLAlchemyRepositor
         background: str | None = None,
     ) -> PersonaRecord:
         async with self._session_scope() as db:
-            logger.info("Updating persona id=%s tenant=%s", persona_id, tenant_id)
-            tenant = await self._get_tenant(db, tenant_id)
-            persona = await self._assert_persona_owned(db, tenant.id, persona_id)
+            logger.info("Updating persona id=%s user=%s", persona_id, username)
+            user = await self._get_user_by_username(db, username)
+            persona = await self._assert_persona_owned(db, user.id, persona_id)
             profile_row = None
             if api_profile_id is not None:
                 if api_profile_id > 0:
-                    profile_row = await self._assert_profile_owned(db, tenant.id, api_profile_id)
+                    profile_row = await self._assert_profile_owned(db, user.id, api_profile_id)
                     persona.api_profile_id = profile_row.id
                 else:
                     persona.api_profile_id = None
@@ -975,33 +945,33 @@ class SQLAlchemyPersonaRepository(PersonaDataRepository, BaseSQLAlchemyRepositor
                 if is_default:
                     await db.execute(
                         update(PersonaRow)
-                        .where(PersonaRow.tenant_id == tenant.id)
+                        .where(PersonaRow.user_id == user.id)
                         .values(is_default=False)
                     )
                 persona.is_default = is_default
             if background is not None:
                 persona.background = background
             await db.flush()
-            logger.info("Persona updated id=%s tenant=%s", persona_id, tenant_id)
+            logger.info("Persona updated id=%s user=%s", persona_id, username)
             if profile_row is None and persona.api_profile_id:
                 profile_row = await db.get(APIProfileRow, persona.api_profile_id)
-            return self._to_persona_record(persona, tenant.name, profile_row)
+            return self._to_persona_record(persona, username, profile_row)
 
-    async def delete_persona(self, tenant_id: str, persona_id: int) -> None:
+    async def delete_persona(self, username: str, persona_id: int) -> None:
         async with self._session_scope() as db:
-            logger.info("Deleting persona id=%s tenant=%s", persona_id, tenant_id)
-            tenant = await self._get_tenant(db, tenant_id)
-            persona = await self._assert_persona_owned(db, tenant.id, persona_id)
+            logger.info("Deleting persona id=%s user=%s", persona_id, username)
+            user = await self._get_user_by_username(db, username)
+            persona = await self._assert_persona_owned(db, user.id, persona_id)
             await db.delete(persona)
 
-    async def load_persona_settings(self, tenant_id: str) -> PersonaSettings:
+    async def load_persona_settings(self, username: str) -> PersonaSettings:
         async with self._session_scope() as db:
-            logger.info("Loading persona settings for tenant=%s", tenant_id)
+            logger.info("Loading persona settings for user=%s", username)
             stmt = (
                 select(PersonaRow, APIProfileRow)
-                .join(TenantRow, PersonaRow.tenant_id == TenantRow.id)
+                .join(UserRow, PersonaRow.user_id == UserRow.id)
                 .outerjoin(APIProfileRow, PersonaRow.api_profile_id == APIProfileRow.id)
-                .where(TenantRow.name == tenant_id)
+                .where(UserRow.username == username)
             )
             rows = await db.execute(stmt)
             items = rows.all()
@@ -1061,13 +1031,13 @@ class SQLAlchemyPersonaRepository(PersonaDataRepository, BaseSQLAlchemyRepositor
                 "temperature": row.temperature,
             }
 
-    async def get_tenant_embedding_config(self, tenant_id: str) -> dict:
-        """Get the tenant's global embedding API profile configuration"""
+    async def get_user_embedding_config(self, username: str) -> dict:
+        """Get the user's global embedding API profile configuration"""
         async with self._session_scope() as db:
-            logger.info("Fetching tenant embedding config for tenant=%s", tenant_id)
-            tenant = await self._get_tenant(db, tenant_id)
+            logger.info("Fetching user embedding config for user=%s", username)
+            user = await self._get_user_by_username(db, username)
             
-            if tenant.embedding_api_profile_id is None:
+            if user.embedding_api_profile_id is None:
                 return {
                     "api_profile_id": None,
                     "api_profile_name": None,
@@ -1075,7 +1045,7 @@ class SQLAlchemyPersonaRepository(PersonaDataRepository, BaseSQLAlchemyRepositor
                     "api_base_url": None,
                 }
             
-            profile = await db.get(APIProfileRow, tenant.embedding_api_profile_id)
+            profile = await db.get(APIProfileRow, user.embedding_api_profile_id)
             if profile is None:
                 return {
                     "api_profile_id": None,
@@ -1091,34 +1061,34 @@ class SQLAlchemyPersonaRepository(PersonaDataRepository, BaseSQLAlchemyRepositor
                 "api_base_url": profile.base_url,
             }
 
-    async def update_tenant_embedding_config(self, tenant_id: str, api_profile_id: int | None) -> dict:
-        """Update the tenant's global embedding API profile configuration"""
+    async def update_user_embedding_config(self, username: str, api_profile_id: int | None) -> dict:
+        """Update the user's global embedding API profile configuration"""
         async with self._session_scope() as db:
-            logger.info("Updating tenant embedding config tenant=%s profile_id=%s", tenant_id, api_profile_id)
-            tenant = await self._get_tenant(db, tenant_id)
+            logger.info("Updating user embedding config user=%s profile_id=%s", username, api_profile_id)
+            user = await self._get_user_by_username(db, username)
             
-            # Validate the profile exists and belongs to this tenant if not None
+            # Validate the profile exists and belongs to this user if not None
             if api_profile_id is not None:
-                profile = await self._assert_profile_owned(db, tenant.id, api_profile_id)
-                tenant.embedding_api_profile_id = profile.id
+                profile = await self._assert_profile_owned(db, user.id, api_profile_id)
+                user.embedding_api_profile_id = profile.id
             else:
-                tenant.embedding_api_profile_id = None
+                user.embedding_api_profile_id = None
             
             await db.flush()
-            logger.info("Tenant embedding config updated tenant=%s", tenant_id)
+            logger.info("User embedding config updated user=%s", username)
             
             # Return the updated config
-            return await self.get_tenant_embedding_config(tenant_id)
+            return await self.get_user_embedding_config(username)
 
-    async def get_embedding_api_config_for_tenant(self, tenant_id: str) -> dict | None:
-        """Get the tenant's embedding API config with decrypted API key for actual use"""
+    async def get_embedding_api_config_for_user(self, username: str) -> dict | None:
+        """Get the user's embedding API config with decrypted API key for actual use"""
         async with self._session_scope() as db:
-            tenant = await self._get_tenant(db, tenant_id)
+            user = await self._get_user_by_username(db, username)
             
-            if tenant.embedding_api_profile_id is None:
+            if user.embedding_api_profile_id is None:
                 return None
             
-            profile = await db.get(APIProfileRow, tenant.embedding_api_profile_id)
+            profile = await db.get(APIProfileRow, user.embedding_api_profile_id)
             if profile is None:
                 return None
             
@@ -1129,24 +1099,24 @@ class SQLAlchemyPersonaRepository(PersonaDataRepository, BaseSQLAlchemyRepositor
                 "temperature": profile.temperature,
             }
 
-    async def _assert_profile_owned(self, db: AsyncSession, tenant_db_id: int, profile_id: int) -> APIProfileRow:
+    async def _assert_profile_owned(self, db: AsyncSession, user_db_id: int, profile_id: int) -> APIProfileRow:
         stmt = select(APIProfileRow).where(
             APIProfileRow.id == profile_id,
-            APIProfileRow.tenant_id == tenant_db_id,
+            APIProfileRow.user_id == user_db_id,
         )
         profile = (await db.execute(stmt)).scalar_one_or_none()
         if profile is None:
-            raise ValueError("API profile does not belong to tenant")
+            raise ValueError("API profile does not belong to user")
         return profile
 
-    async def _assert_persona_owned(self, db: AsyncSession, tenant_db_id: int, persona_id: int) -> PersonaRow:
+    async def _assert_persona_owned(self, db: AsyncSession, user_db_id: int, persona_id: int) -> PersonaRow:
         stmt = select(PersonaRow).where(
             PersonaRow.id == persona_id,
-            PersonaRow.tenant_id == tenant_db_id,
+            PersonaRow.user_id == user_db_id,
         )
         persona = (await db.execute(stmt)).scalar_one_or_none()
         if persona is None:
-            raise ValueError("Persona does not belong to tenant")
+            raise ValueError("Persona does not belong to user")
         return persona
 
     @staticmethod
@@ -1158,7 +1128,7 @@ class SQLAlchemyPersonaRepository(PersonaDataRepository, BaseSQLAlchemyRepositor
     def _to_api_profile_record(
         self,
         row: APIProfileRow,
-        tenant_name: str,
+        username: str,
         *,
         decrypted_key: str | None = None,
     ) -> APIProfileRecord:
@@ -1166,7 +1136,7 @@ class SQLAlchemyPersonaRepository(PersonaDataRepository, BaseSQLAlchemyRepositor
         created_at = row.created_at or datetime.now(timezone.utc)
         return APIProfileRecord(
             id=row.id,
-            tenant_id=tenant_name,
+            username=username,
             name=row.name,
             base_url=row.base_url,
             model=row.model,
@@ -1180,12 +1150,12 @@ class SQLAlchemyPersonaRepository(PersonaDataRepository, BaseSQLAlchemyRepositor
     @staticmethod
     def _to_persona_record(
         row: PersonaRow,
-        tenant_name: str,
+        username: str,
         profile: APIProfileRow | None,
     ) -> PersonaRecord:
         return PersonaRecord(
             id=row.id,
-            tenant_id=tenant_name,
+            username=username,
             name=row.name,
             handle=row.handle,
             prompt=row.prompt,

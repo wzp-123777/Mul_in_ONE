@@ -73,22 +73,22 @@ def get_rag_service() -> RAGService:
             raise ValueError("Persona ID required for API configuration resolution")
         
         if use_embedding:
-            # Get persona record to extract tenant_id dynamically
+            # Get persona record to extract username dynamically
             persona_record = await repo.get_persona_by_id(persona_id)
             if persona_record is None:
                 raise ValueError(f"Persona {persona_id} not found")
             
-            embedding_config = await repo.get_tenant_embedding_config(persona_record.tenant_id)
+            embedding_config = await repo.get_tenant_embedding_config(persona_record.username)
             if embedding_config.get("api_profile_id") is None:
                 raise ValueError(
-                    f"No embedding model configured for tenant {persona_record.tenant_id}. "
+                    f"No embedding model configured for user {persona_record.username}. "
                     "Please configure an embedding API profile in Persona settings."
                 )
             
             # get_persona_api_config_for_embedding will fetch and decrypt the key
-            embedding_api_config = await repo.get_embedding_api_config_for_tenant(persona_record.tenant_id)
+            embedding_api_config = await repo.get_embedding_api_config_for_tenant(persona_record.username)
             if embedding_api_config is None:
-                raise ValueError(f"Embedding API profile misconfigured for tenant {persona_record.tenant_id}")
+                raise ValueError(f"Embedding API profile misconfigured for user {persona_record.username}")
             
             return embedding_api_config
         

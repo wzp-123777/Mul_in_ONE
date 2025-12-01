@@ -47,8 +47,7 @@ def _serialize_session(record: SessionRecord) -> dict[str, object | None]:
 
     return {
         "id": record.id,
-        "tenant_id": record.tenant_id,
-        "user_id": record.user_id,
+        "username": record.username,
         "created_at": record.created_at.isoformat(),
         "user_persona": record.user_persona,
         "title": getattr(record, "title", None),
@@ -60,8 +59,7 @@ def _serialize_session(record: SessionRecord) -> dict[str, object | None]:
 
 @router.post("/sessions", status_code=status.HTTP_201_CREATED)
 async def create_session(
-    tenant_id: str,
-    user_id: str,
+    username: str,
     user_persona: str | None = None,
     title: str | None = None,
     user_display_name: str | None = None,
@@ -70,8 +68,7 @@ async def create_session(
     service: SessionService = Depends(get_session_service),
 ):
     session_id = await service.create_session(
-        tenant_id=tenant_id,
-        user_id=user_id,
+        username=username,
         user_persona=user_persona,
         initial_persona_ids=initial_persona_ids,
     )
@@ -90,11 +87,10 @@ async def create_session(
 
 @router.get("/sessions", status_code=status.HTTP_200_OK)
 async def list_sessions(
-    tenant_id: str,
-    user_id: str,
+    username: str,
     repository=Depends(get_session_repository),
 ):
-    sessions = await repository.list_sessions(tenant_id=tenant_id, user_id=user_id)
+    sessions = await repository.list_sessions(username=username)
     return [_serialize_session(s) for s in sessions]
 
 

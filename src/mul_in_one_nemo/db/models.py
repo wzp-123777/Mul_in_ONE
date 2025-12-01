@@ -32,30 +32,19 @@ session_participants_table = Table(
 )
 
 
-class Tenant(Base):
-    __tablename__ = "tenants"
+class User(Base):
+    """Merged User (formerly Tenant + User)."""
+    __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    name: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
-    plan: Mapped[str] = mapped_column(String(32), default="free")
+    username: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    display_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    role: Mapped[str] = mapped_column(String(32), default="member")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     embedding_api_profile_id: Mapped[int | None] = mapped_column(ForeignKey("api_profiles.id"), nullable=True)
 
-    users: Mapped[list["User"]] = relationship("User", back_populates="tenant", cascade="all, delete-orphan")
-    sessions: Mapped[list["Session"]] = relationship("Session", back_populates="tenant", cascade="all, delete-orphan")
-
-
-class User(Base):
-    __tablename__ = "users"
-    __table_args__ = (UniqueConstraint("tenant_id", "email", name="uq_user_tenant_email"),)
-
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"))
-    email: Mapped[str] = mapped_column(String(255), nullable=False)
-    role: Mapped[str] = mapped_column(String(32), default="member")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-
-    tenant: Mapped["Tenant"] = relationship("Tenant", back_populates="users")
     sessions: Mapped[list["Session"]] = relationship("Session", back_populates="user", cascade="all, delete-orphan")
 
 
@@ -63,7 +52,7 @@ class APIProfile(Base):
     __tablename__ = "api_profiles"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"))
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     name: Mapped[str] = mapped_column(String(64))
     base_url: Mapped[str] = mapped_column(String(255))
     model: Mapped[str] = mapped_column(String(255))
@@ -79,7 +68,7 @@ class Persona(Base):
     __tablename__ = "personas"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"))
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     name: Mapped[str] = mapped_column(String(128))
     handle: Mapped[str] = mapped_column(String(128))
     prompt: Mapped[str] = mapped_column(Text)
@@ -100,8 +89,7 @@ class Session(Base):
     __tablename__ = "sessions"
 
     id: Mapped[str] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"))
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     status: Mapped[str] = mapped_column(String(32), default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     user_persona: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -110,7 +98,6 @@ class Session(Base):
     user_display_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     user_handle: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
-    tenant: Mapped["Tenant"] = relationship("Tenant", back_populates="sessions")
     user: Mapped["User"] = relationship("User", back_populates="sessions")
     messages: Mapped[list["SessionMessage"]] = relationship(
         "SessionMessage", back_populates="session", cascade="all, delete-orphan"
