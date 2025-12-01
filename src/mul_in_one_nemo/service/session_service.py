@@ -13,6 +13,7 @@ import logging
 from mul_in_one_nemo.service.models import SessionMessage, SessionRecord
 from mul_in_one_nemo.service.repositories import SessionRepository
 from mul_in_one_nemo.service.runtime_adapter import RuntimeAdapter
+from mul_in_one_nemo.service.interrupts import request_interrupt
 
 logger = logging.getLogger(__name__)
 
@@ -239,6 +240,10 @@ class SessionService:
             if runtime.is_streaming and stop_cmd.match(message.content or ""):
                 await runtime.force_stop("user_explicit_stop")
                 return
+            # If a normal user message arrives while streaming, request an interrupt so
+            # the current multi-round exchange will cut short after the present round.
+            if runtime.is_streaming:
+                request_interrupt(message.session_id)
         except Exception:
             pass
 

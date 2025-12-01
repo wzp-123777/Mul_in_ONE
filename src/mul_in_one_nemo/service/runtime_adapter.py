@@ -23,6 +23,7 @@ from mul_in_one_nemo.service.repositories import (
     SQLAlchemyPersonaRepository,
 )
 from mul_in_one_nemo.service.rag_context import set_rag_context, clear_rag_context
+from mul_in_one_nemo.service.interrupts import consume_interrupt
 
 logger = logging.getLogger(__name__)
 
@@ -506,6 +507,11 @@ class NemoRuntimeAdapter(RuntimeAdapter):
                     break
 
                 # If soft closing by user: only first round executed already (max_exchanges=1) so loop ends naturally
+                # Interrupt check: if a new user message arrived mid-conversation, end early after this round
+                if consume_interrupt(session.id):
+                    logger.info("Interrupt flag consumed; ending conversation early to process new user message")
+                    yield {"event": "session.interrupted", "data": {"session_id": session.id, "reason": "user_message_pending"}}
+                    break
 
                 # Mark first round complete after all speakers in this round have spoken
                 is_first_round = False
