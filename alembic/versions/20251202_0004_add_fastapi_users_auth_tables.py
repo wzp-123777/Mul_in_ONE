@@ -20,19 +20,23 @@ depends_on = None
 def upgrade():
     # 修改 users 表以兼容 FastAPI-Users
     with op.batch_alter_table('users') as batch_op:
+        # 重命名 password_hash 为 hashed_password
+        batch_op.alter_column('password_hash', 
+                            new_column_name='hashed_password',
+                            existing_type=sa.String(length=255),
+                            type_=sa.String(length=1024),
+                            nullable=True)
+        
         # 添加 FastAPI-Users 必需字段
-        batch_op.add_column(sa.Column('hashed_password', sa.String(length=1024), nullable=True))
         batch_op.add_column(sa.Column('is_active', sa.Boolean(), nullable=False, server_default='1'))
         batch_op.add_column(sa.Column('is_superuser', sa.Boolean(), nullable=False, server_default='0'))
         batch_op.add_column(sa.Column('is_verified', sa.Boolean(), nullable=False, server_default='0'))
         
-        # 删除旧的 password_hash 和 created_at 列（如果存在）
-        # batch_op.drop_column('password_hash')
-        # batch_op.drop_column('created_at')
-        
-        # 确保 email 字段存在且有索引
-        batch_op.alter_column('email', existing_type=sa.String(length=255), nullable=True)
+        # 确保 email 字段有唯一索引
         batch_op.create_index('ix_users_email', ['email'], unique=True)
+        
+        # 确保 username 字段有索引
+        batch_op.create_index('ix_users_username', ['username'], unique=True)
     
     # 创建 OAuth 账户表
     op.create_table(
@@ -59,12 +63,15 @@ def downgrade():
     
     # 恢复 users 表
     with op.batch_alter_table('users') as batch_op:
+        batch_op.drop_index('ix_users_username')
         batch_op.drop_index('ix_users_email')
         batch_op.drop_column('is_verified')
         batch_op.drop_column('is_superuser')
         batch_op.drop_column('is_active')
-        batch_op.drop_column('hashed_password')
         
-        # 如果需要，恢复旧字段
-        # batch_op.add_column(sa.Column('password_hash', sa.String(length=255), nullable=True))
-        # batch_op.add_column(sa.Column('created_at', sa.DateTime(), nullable=False, server_default=sa.text('CURRENT_TIMESTAMP')))
+        # 恢复原始字段名
+        batch_op.alter_column('hashed_password',
+                            new_column_name='password_hash',
+                            existing_type=sa.String(length=1024),
+                            type_=sa.String(length=255),
+                            nullable=True)

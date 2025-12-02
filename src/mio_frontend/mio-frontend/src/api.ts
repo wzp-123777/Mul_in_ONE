@@ -4,28 +4,37 @@ import { reactive } from 'vue';
 // --- Auth State ---
 export const authState = reactive({
   username: localStorage.getItem('mio_username') || '',
-  isLoggedIn: !!localStorage.getItem('mio_username'),
+  isLoggedIn: !!localStorage.getItem('access_token'),
+  token: localStorage.getItem('access_token') || '',
 });
 
-export const login = (username: string) => {
+export const login = (username: string, token: string) => {
   authState.username = username;
+  authState.token = token;
   authState.isLoggedIn = true;
   localStorage.setItem('mio_username', username);
+  localStorage.setItem('access_token', token);
 };
 
 export const logout = () => {
   authState.username = '';
+  authState.token = '';
   authState.isLoggedIn = false;
   localStorage.removeItem('mio_username');
+  localStorage.removeItem('access_token');
 };
 
 export const api = axios.create({
   baseURL: '/api',
 });
 
-// Interceptor to inject username
+// Interceptor to inject JWT token and username
 api.interceptors.request.use((config) => {
-  if (authState.isLoggedIn) {
+  if (authState.isLoggedIn && authState.token) {
+    // 添加 JWT Bearer token
+    config.headers.Authorization = `Bearer ${authState.token}`;
+    
+    // 保留原有的 username 参数注入（向后兼容）
     config.params = config.params || {};
     if (!config.params.username) {
       config.params.username = authState.username;
@@ -33,6 +42,18 @@ api.interceptors.request.use((config) => {
   }
   return config;
 });
+
+// 401 拦截器：token 过期时自动跳转登录
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      logout();
+      window.location.href = '/login';
+    }
+    return Promise.reject(error);
+  }
+);
 
 export interface Message {
   id: string;
@@ -49,101 +70,17 @@ export interface Session {
   title?: string | null;
   user_display_name?: string | null;
   user_handle?: string | null;
-  participants?: Array<{
-    id: number;
-    name: string;
-    handle: string;
-  }>;
 }
-
-// ...existing code...
-export const createSession = async (
-  user_persona?: string,
-  title?: string,
-  user_display_name?: string,
-  user_handle?: string
-): Promise<string> => {
-  // Params injected by interceptor
-  const params: any = {};
-  if (user_persona) params.user_persona = user_persona;
-  if (title) params.title = title;
-  if (user_display_name) params.user_display_name = user_display_name;
-  if (user_handle) params.user_handle = user_handle;
-  
-  const response = await api.post<{ session_id: string }>('/sessions', null, {
-    params: Object.keys(params).length > 0 ? params : undefined
-  });
-  return response.data.session_id;
-};
-
-export const getSessions = async (): Promise<Session[]> => {
-  const response = await api.get<Session[]>('/sessions');
-  return response.data;
-}
-
-export const getSession = async (session_id: string): Promise<Session> => {
-  const response = await api.get<Session>(`/sessions/${session_id}`);
-  return response.data;
-};
-
-export const updateSessionParticipants = async (
-  session_id: string,
-  persona_ids: number[]
-): Promise<Session> => {
-  const response = await api.put<Session>(
-    `/sessions/${session_id}/participants`,
-    { persona_ids }
-  );
-  return response.data;
-};
-
-export const updateSessionMeta = async (
-  session_id: string,
-  payload: Partial<Pick<Session, 'title' | 'user_display_name' | 'user_handle' | 'user_persona'>>
-): Promise<Session> => {
-  const response = await api.patch<Session>(`/sessions/${session_id}`, payload);
-  return response.data;
-};
-
-export const deleteSession = async (session_id: string): Promise<void> => {
-  await api.delete(`/sessions/${session_id}`);
-};
-
-export const deleteSessions = async (session_ids: string[]): Promise<void> => {
-  await api.post('/sessions/batch-delete', { session_ids });
-};
-
-export const stopSession = async (session_id: string, reason?: string): Promise<void> => {
-  await api.post(`/sessions/${session_id}/stop`, reason ? { reason } : undefined);
-};
-
-export const getMessages = async (session_id: string, limit: number = 50): Promise<Message[]> => {
-  const response = await api.get<Message[]>(`/sessions/${session_id}/messages`, {
-    params: { limit },
-  });
-  return response.data;
-};
-
-export const sendMessage = async (session_id: string, content: string, target_personas: string[] = []): Promise<void> => {
-  await api.post(
-    `/sessions/${session_id}/messages`,
-    { 
-      content,
-      target_personas 
-    }
-  );
-};
 
 export interface APIProfile {
   id: number;
-  username: string;
+  user_id: number;
   name: string;
   base_url: string;
   model: string;
-  temperature?: number;
+  temperature: number;
   created_at: string;
-  api_key_preview?: string;
-  is_embedding_model?: boolean;
+  is_embedding_model: boolean;
   embedding_dim?: number | null;
 }
 
@@ -154,7 +91,7 @@ export interface CreateAPIProfilePayload {
   model: string;
   api_key: string;
   temperature?: number;
-  is_embedding_model?: boolean;
+  is_embedding_model: boolean;
   embedding_dim?: number | null;
 }
 
@@ -171,43 +108,25 @@ export interface UpdateAPIProfilePayload {
 
 export interface Persona {
   id: number;
-  username: string;
+  user_id: number;
   name: string;
   handle: string;
   prompt: string;
-  background?: string;
+  background?: string | null;
   tone: string;
   proactivity: number;
   memory_window: number;
   max_agents_per_turn: number;
+  api_profile_id?: number | null;
   is_default: boolean;
-  api_profile_id?: number;
-  api_profile_name?: string;
-  api_model?: string;
-  api_base_url?: string;
-  temperature?: number;
 }
 
 export interface CreatePersonaPayload {
   username: string;
   name: string;
+  handle: string;
   prompt: string;
-  background?: string;
-  handle?: string;
-  tone?: string;
-  proactivity?: number;
-  memory_window?: number;
-  max_agents_per_turn?: number;
-  api_profile_id?: number;
-  is_default?: boolean;
-}
-
-export interface UpdatePersonaPayload {
-  username: string;
-  name?: string;
-  prompt?: string;
   background?: string | null;
-  handle?: string;
   tone?: string;
   proactivity?: number;
   memory_window?: number;
@@ -216,16 +135,113 @@ export interface UpdatePersonaPayload {
   is_default?: boolean;
 }
 
-export const getAPIProfiles = async (username: string): Promise<APIProfile[]> => {
-  const response = await api.get<APIProfile[]>('/personas/api-profiles', {
+export interface UpdatePersonaPayload {
+  username: string;
+  name?: string;
+  handle?: string;
+  prompt?: string;
+  background?: string | null;
+  tone?: string;
+  proactivity?: number;
+  memory_window?: number;
+  max_agents_per_turn?: number;
+  api_profile_id?: number | null;
+  is_default?: boolean;
+}
+
+export interface CreateSessionPayload {
+  username: string;
+  persona_ids: number[];
+  user_persona?: string;
+  title?: string;
+  user_display_name?: string;
+  user_handle?: string;
+}
+
+export interface UpdateSessionPayload {
+  title?: string;
+  user_display_name?: string;
+  user_handle?: string;
+  user_persona?: string;
+}
+
+export interface UserMessage {
+  content: string;
+  sender_name?: string;
+  target_personas?: string[];
+}
+
+export const getSessions = async (username: string): Promise<Session[]> => {
+  const response = await api.get<Session[]>('/sessions', {
     params: { username },
   });
   return response.data;
 };
 
-export const getAPIProfile = async (username: string, profile_id: number): Promise<APIProfile> => {
-  const response = await api.get<APIProfile>(`/personas/api-profiles/${profile_id}`, {
+export const getSession = async (sessionId: string, username: string): Promise<Session> => {
+  const response = await api.get<Session>(`/sessions/${sessionId}`, {
+    params: { username },
+  });
+  return response.data;
+};
+
+export const getSessionMessages = async (sessionId: string, username: string): Promise<Message[]> => {
+  const response = await api.get<Message[]>(`/sessions/${sessionId}/messages`, {
+    params: { username },
+  });
+  return response.data;
+};
+
+// Alias for getSessionMessages (for backward compatibility)
+export const getMessages = getSessionMessages;
+
+export const createSession = async (payload: CreateSessionPayload): Promise<Session> => {
+  const response = await api.post<Session>('/sessions', payload);
+  return response.data;
+};
+
+export const updateSession = async (sessionId: string, username: string, payload: UpdateSessionPayload): Promise<Session> => {
+  const response = await api.patch<Session>(`/sessions/${sessionId}`, payload, {
     params: { username }
+  });
+  return response.data;
+};
+
+// Alias for updateSession with simpler signature
+export const updateSessionMeta = async (sessionId: string, payload: UpdateSessionPayload): Promise<Session> => {
+  const response = await api.patch<Session>(`/sessions/${sessionId}`, payload);
+  return response.data;
+};
+
+export const updateSessionParticipants = async (sessionId: string, personaIds: number[]): Promise<void> => {
+  await api.patch(`/sessions/${sessionId}/participants`, { persona_ids: personaIds });
+};
+
+export const deleteSession = async (sessionId: string, username: string): Promise<void> => {
+  await api.delete(`/sessions/${sessionId}`, {
+    params: { username },
+  });
+};
+
+export const deleteSessions = async (sessionIds: string[]): Promise<void> => {
+  await Promise.all(sessionIds.map(id => api.delete(`/sessions/${id}`)));
+};
+
+export const sendMessage = async (sessionId: string, username: string, userMessage: UserMessage): Promise<void> => {
+  await api.post(`/sessions/${sessionId}/messages`, userMessage, {
+    params: { username },
+  });
+};
+
+export const stopSession = async (sessionId: string, username: string): Promise<void> => {
+  await api.post(`/sessions/${sessionId}/stop`, null, {
+    params: { username }
+  });
+};
+
+export const getAPIProfiles = async (username: string): Promise<APIProfile[]> => {
+  const response = await api.get<APIProfile[]>('/personas/api-profiles', {
+    params: { username },
   });
   return response.data;
 };
@@ -235,10 +251,7 @@ export const createAPIProfile = async (payload: CreateAPIProfilePayload): Promis
   return response.data;
 };
 
-export const updateAPIProfile = async (
-  profile_id: number,
-  payload: UpdateAPIProfilePayload
-): Promise<APIProfile> => {
+export const updateAPIProfile = async (profile_id: number, payload: UpdateAPIProfilePayload): Promise<APIProfile> => {
   const { username, ...body } = payload;
   const response = await api.patch<APIProfile>(`/personas/api-profiles/${profile_id}`, body, {
     params: { username }
@@ -276,4 +289,59 @@ export const deletePersona = async (username: string, persona_id: number): Promi
   await api.delete(`/personas/personas/${persona_id}`, {
     params: { username }
   });
+};
+
+// ==================== Auth APIs (FastAPI-Users) ====================
+
+export interface LoginCredentials {
+  username: string;
+  password: string;
+}
+
+export interface RegisterPayload {
+  email: string;
+  password: string;
+  username: string;
+  display_name?: string;
+}
+
+export interface UserInfo {
+  id: number;
+  email: string;
+  username: string;
+  display_name?: string;
+  is_active: boolean;
+  is_superuser: boolean;
+  is_verified: boolean;
+}
+
+export interface AuthResponse {
+  access_token: string;
+  token_type: string;
+}
+
+export const authLogin = async (credentials: LoginCredentials): Promise<AuthResponse> => {
+  const formData = new FormData();
+  formData.append('username', credentials.username);
+  formData.append('password', credentials.password);
+  
+  const response = await api.post<AuthResponse>('/auth/login', formData, {
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+  });
+  return response.data;
+};
+
+export const authRegister = async (payload: RegisterPayload): Promise<UserInfo> => {
+  const response = await api.post<UserInfo>('/auth/register', payload);
+  return response.data;
+};
+
+export const getCurrentUser = async (): Promise<UserInfo> => {
+  const response = await api.get<UserInfo>('/users/me');
+  return response.data;
+};
+
+export const authLogout = async (): Promise<void> => {
+  await api.post('/auth/logout');
+  logout();
 };
