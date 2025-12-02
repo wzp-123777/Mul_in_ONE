@@ -192,6 +192,11 @@ export JWT_SECRET="your-secret-key-change-in-production"
 # 生成安全的随机密钥（推荐）
 # export JWT_SECRET="$(openssl rand -hex 32)"
 
+# Docker 和 Milvus 配置（Milvus 启动必需）
+export DOCKER_VOLUME_DIRECTORY="$(pwd)/external/NeMo-Agent-Toolkit/examples/deploy"
+export MILVUS_CONFIG_DIR="$(pwd)/configs"
+export MILVUS_MEM_LIMIT="6g"
+
 # OAuth 配置（可选，如需第三方登录则取消注释）
 # export GITEE_CLIENT_ID="your-gitee-client-id"
 # export GITEE_CLIENT_SECRET="your-gitee-client-secret"
@@ -208,6 +213,8 @@ direnv allow  # 如果使用 direnv（推荐）
 # 或者手动加载
 source .envrc
 ```
+
+> 💡 **重要**: `DOCKER_VOLUME_DIRECTORY` 变量用于 Milvus Docker Compose 配置，指向 NeMo Toolkit 的 vendor volumes 根目录。如果不设置，Docker 会将路径解释为命名卷而非绑定挂载，导致 Milvus 无法正确读取配置文件。
 
 > ⚠️ **重要安全提示**: 
 > - `.envrc` 包含敏感信息（API密钥、数据库密码、JWT密钥等）
@@ -256,24 +263,47 @@ export DATABASE_URL="postgresql+asyncpg://user:password@host:port/dbname"
 **使用项目脚本** (推荐):
 
 ```bash
+# 首次启动前，确保已加载环境变量
+direnv allow  # 或 source .envrc
+
 # 使用项目控制脚本启动 Milvus
 ./scripts/milvus_control.sh start
+
+# 查看 Milvus 状态
+./scripts/milvus_control.sh status
+
+# 查看 Milvus 日志
+./scripts/milvus_control.sh logs
 ```
 
-**手动启动**:
+**手动启动** (不推荐，需要手动设置环境变量):
 
 ```bash
-# 数据会存储在项目的 .milvus 目录
-docker run -d --name milvus-standalone \
-  -p 19530:19530 -p 9091:9091 \
-  -e ETCD_USE_EMBED=true \
-  -v $(pwd)/.milvus:/var/lib/milvus \
-  milvusdb/milvus:latest
+# 确保环境变量已设置
+export DOCKER_VOLUME_DIRECTORY="$(pwd)/external/NeMo-Agent-Toolkit/examples/deploy"
+export MILVUS_CONFIG_DIR="$(pwd)/configs"
+export MILVUS_MEM_LIMIT="6g"
+
+# 使用 Docker Compose 启动
+docker compose -f configs/docker-compose.milvus.local.yml up -d
+
+# 查看日志
+docker compose -f configs/docker-compose.milvus.local.yml logs milvus-standalone --tail=200
+```
+
+**验证连接**:
+
+```bash
+# 测试 Milvus 端口是否可达
+nc -vz localhost 19530
+
+# 查看配置文件是否正确挂载
+docker compose -f configs/docker-compose.milvus.local.yml run --rm milvus ls -l /milvus/configs
 ```
 
 **数据持久化**: 
-- Milvus 数据存储在项目的 `.milvus/` 目录
-- 向量索引和集合数据完全本地化
+- Milvus 数据存储在 `external/NeMo-Agent-Toolkit/examples/deploy/volumes/` 目录
+- 配置文件从 `configs/milvus.yaml` 挂载
 - 支持项目整体迁移
 
 #### 6. 启动后端服务
@@ -542,15 +572,25 @@ echo $DATABASE_URL
 
 **2. Milvus 连接失败**
 ```bash
+# 检查环境变量是否正确设置
+echo $DOCKER_VOLUME_DIRECTORY
+echo $MILVUS_CONFIG_DIR
+echo $MILVUS_MEM_LIMIT
+
 # 检查 Milvus 容器状态
-docker ps | grep milvus
+docker compose -f configs/docker-compose.milvus.local.yml ps
 
 # 查看 Milvus 日志
-docker logs milvus-standalone
+./scripts/milvus_control.sh logs
 
-# 重启 Milvus
+# 重启 Milvus（会自动加载环境变量）
 ./scripts/milvus_control.sh restart
+
+# 验证端口连通性
+nc -vz localhost 19530
 ```
+
+> ⚠️ **常见问题**: 如果直接使用 `docker compose` 命令失败，可能是因为 `DOCKER_VOLUME_DIRECTORY` 未设置。请使用 `./scripts/milvus_control.sh` 脚本，它会自动处理环境变量。
 
 **3. RAG 摄取失败**
 - 检查 DEBUG 页面日志查看详细错误

@@ -91,6 +91,8 @@ class RAGService:
         chunk_overlap: int = 50,
         default_top_k: int = 4,
         use_nat_retriever: bool = True,  # Flag to switch to NAT MilvusRetriever
+        insert_batch_size: int = 64,
+        delete_batch_size: int = 200,
     ):
         """RAG service.
 
@@ -105,6 +107,8 @@ class RAGService:
         self.chunk_overlap = chunk_overlap
         self.default_top_k = default_top_k
         self.use_nat_retriever = use_nat_retriever
+        self.insert_batch_size = max(1, insert_batch_size)
+        self.delete_batch_size = max(1, delete_batch_size)
         
         # Initialize NAT adapter if enabled
         self._rag_adapter: Optional[RagAdapter] = None
@@ -263,6 +267,21 @@ class RAGService:
         collection.load()
         logger.info(f"Collection {collection_name} created and loaded.")
 
+    def _insert_columns_batched(self, collection: Collection, data_columns: list[list], batch_size: int):
+        """Insert columnar data into Milvus in smaller batches to reduce peak memory."""
+        if not data_columns:
+            return
+        row_count = len(data_columns[0])
+        for col in data_columns[1:]:
+            if len(col) != row_count:
+                raise ValueError("All data columns must have the same length")
+
+        for start in range(0, row_count, batch_size):
+            end = min(start + batch_size, row_count)
+            batch = [col[start:end] for col in data_columns]
+            logger.debug(f"Inserting Milvus batch rows {start}:{end}")
+            collection.insert(batch)
+
     async def ingest_url(self, url: str, persona_id: int, username: str) -> dict:
         """
         Fetch content from a URL, generate embeddings, and store them in a persona-specific
@@ -364,7 +383,7 @@ class RAGService:
         logger.info(
             f"Inserting data columns: cols={len(data_columns)} rows={len(doc_ids)} into {collection_name}"
         )
-        collection.insert(data_columns)
+        self._insert_columns_batched(collection, data_columns, self.insert_batch_size)
         collection.flush()
         logger.info(f"Successfully ingested {len(doc_ids)} document chunks into '{collection_name}'.")
 
@@ -453,7 +472,7 @@ class RAGService:
         logger.info(
             f"Inserting data columns: cols={len(data_columns)} rows={len(doc_ids)} into {collection_name}"
         )
-        collection.insert(data_columns)
+        self._insert_columns_batched(collection, data_columns, self.insert_batch_size)
         collection.flush()
         logger.info(f"Successfully ingested {len(doc_ids)} document chunks into '{collection_name}'.")
         
@@ -489,16 +508,28 @@ class RAGService:
             # Note: For Milvus 2.3.x, we need to delete by primary key
             # First query to get IDs, then delete by IDs
             expr = f'source == "{source}"'
-            query_results = collection.query(expr=expr, output_fields=["document_id"])
-            if not query_results:
+            total_deleted = 0
+            while True:
+                query_results = collection.query(
+                    expr=expr, output_fields=["document_id"], limit=self.delete_batch_size
+                )
+                if not query_results:
+                    break
+
+                ids_to_delete = [r["document_id"] for r in query_results]
+                delete_expr = f"document_id in {ids_to_delete}"
+                delete_result = collection.delete(delete_expr)
+                total_deleted += getattr(delete_result, "delete_count", 0)
+                logger.info(
+                    f"Deleted batch of {len(ids_to_delete)} (total so far: {total_deleted}) from '{collection_name}'"
+                )
+            
+            if total_deleted == 0:
                 logger.info(f"No documents found with source='{source}' in '{collection_name}'.")
-                return
-            
-            ids_to_delete = [r["document_id"] for r in query_results]
-            delete_expr = f"document_id in {ids_to_delete}"
-            delete_result = collection.delete(delete_expr)
-            
-            logger.info(f"Successfully deleted {delete_result.delete_count} documents from '{collection_name}' with expression: '{expr}'.")
+            else:
+                logger.info(
+                    f"Successfully deleted {total_deleted} documents from '{collection_name}' with expression: '{expr}'."
+                )
 
         except Exception as e:
             logger.error(f"Failed to delete documents by source in collection '{collection_name}': {e}")
@@ -647,4 +678,3 @@ Helpful Answer:"""
         except Exception as e:
             logger.error(f"Failed to generate response: {e}")
             raise
-

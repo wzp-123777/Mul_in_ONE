@@ -7,13 +7,47 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
 # Set the path to the Milvus docker-compose file using the absolute path
-MILVUS_COMPOSE_FILE="$PROJECT_ROOT/external/NeMo-Agent-Toolkit/examples/deploy/docker-compose.milvus.yml"
+# Keep vendor assets untouched by using the project-level override compose
+MILVUS_COMPOSE_FILE="$PROJECT_ROOT/configs/docker-compose.milvus.local.yml"
+: "${DOCKER_VOLUME_DIRECTORY:="$PROJECT_ROOT/external/NeMo-Agent-Toolkit/examples/deploy"}"
+export MILVUS_CONFIG_PATH="$PROJECT_ROOT/configs/milvus.yaml"
+export MILVUS_CONFIG_DIR="$PROJECT_ROOT/configs"
+export DOCKER_VOLUME_DIRECTORY
+: "${DOCKER_NETWORK_NAME:=nvidia-rag-test}"
+
+ensure_network() {
+    if ! docker network inspect "$DOCKER_NETWORK_NAME" >/dev/null 2>&1; then
+        echo "Creating docker network: $DOCKER_NETWORK_NAME"
+        docker network create "$DOCKER_NETWORK_NAME"
+    fi
+}
+
+# Check and fix Milvus config directory issue
+fix_milvus_config() {
+    local config_path="$PROJECT_ROOT/configs/milvus.yaml"
+    
+    # If milvus.yaml exists as a directory, remove it
+    if [ -d "$config_path" ]; then
+        echo "⚠️  Warning: Found milvus.yaml as a directory instead of a file"
+        echo "   Removing empty directory: $config_path"
+        rmdir "$config_path" 2>/dev/null || {
+            echo "   Directory not empty, backing up to milvus.yaml.bak/"
+            mv "$config_path" "${config_path}.bak"
+        }
+    fi
+    
+    # Note: We don't create a config file since Milvus uses default config
+    # The docker-compose.yml has been updated to not require --config flag
+}
 
 # Check if the file exists
 if [ ! -f "$MILVUS_COMPOSE_FILE" ]; then
     echo "Error: Could not find the Milvus docker-compose file at: $MILVUS_COMPOSE_FILE"
     exit 1
 fi
+
+# Run config fix before any operations
+fix_milvus_config
 
 function show_help {
     echo "Usage: ./scripts/milvus_control.sh [COMMAND]"
@@ -34,6 +68,7 @@ fi
 case "$1" in
     start)
         echo "Starting Milvus services..."
+        ensure_network
         docker compose -f "$MILVUS_COMPOSE_FILE" up -d
         if [ $? -eq 0 ]; then
             echo "Milvus services started successfully."
@@ -47,6 +82,7 @@ case "$1" in
         ;;
     restart)
         echo "Restarting Milvus services..."
+        ensure_network
         docker compose -f "$MILVUS_COMPOSE_FILE" down && \
         docker compose -f "$MILVUS_COMPOSE_FILE" up -d
         ;;

@@ -78,3 +78,13 @@ export MUL_IN_ONE_TEMPERATURE="0.4"
 
 # Avatar Env dir
 export PERSONA_AVATAR_DIR=.postgresql/persona_avatars
+
+# --- Docker 和 Milvus 配置 ---
+# Docker 卷根目录（NeMo Toolkit vendor volumes）
+export DOCKER_VOLUME_DIRECTORY="$(pwd)/external/NeMo-Agent-Toolkit/examples/deploy"
+
+# Milvus 配置文件目录
+export MILVUS_CONFIG_DIR="$(pwd)/configs"
+
+# Milvus 内存限制（建议至少 8GB 以避免 OOM 错误）
+export MILVUS_MEM_LIMIT="8g"
