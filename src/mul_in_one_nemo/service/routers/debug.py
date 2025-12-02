@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from collections import deque
 from typing import List
 
@@ -18,6 +19,7 @@ router = APIRouter(prefix="/debug", tags=["debug"])
 
 LOG_FILE_RELATIVE = os.path.join("logs", "backend.log")
 _LEVEL_ORDER = {name: index for index, name in enumerate(LOG_LEVELS)}
+_LOG_LINE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s+([A-Z]+)\s")
 log_manager = get_log_manager()
 
 
@@ -36,10 +38,11 @@ class UpdateLogSettingsRequest(BaseModel):
 def _line_meets_level(line: str, min_level: str | None) -> bool:
     if min_level is None:
         return True
-    tokens = line.split()
-    if len(tokens) < 2:
-        return True
-    level_name = tokens[1].upper()
+    match = _LOG_LINE_RE.match(line)
+    if not match:
+        # Non-header lines inherit previous decision; let caller handle via include block
+        return False
+    level_name = match.group(1).upper()
     return _LEVEL_ORDER.get(level_name, 0) >= _LEVEL_ORDER[min_level]
 
 
@@ -53,14 +56,22 @@ def _normalize_level(level: str | None) -> str | None:
 
 
 def _read_tail_lines(file_path: str, max_lines: int, min_level: str | None) -> List[str]:
+    """
+    Include full log records: keep the header line that passes level filter and any
+    subsequent non-header lines (e.g., stack traces) until the next header.
+    """
     if not os.path.exists(file_path):
         return ["<log file not found>"]
     selected: deque[str] = deque(maxlen=max_lines)
+    include_block = min_level is None
     try:
         with open(file_path, "r", errors="replace") as f:
             for raw_line in f:
                 line = raw_line.rstrip("\n")
-                if _line_meets_level(line, min_level):
+                is_header = bool(_LOG_LINE_RE.match(line))
+                if is_header:
+                    include_block = _line_meets_level(line, min_level)
+                if include_block:
                     selected.append(line)
     except Exception as e:  # pragma: no cover - defensive read path
         return [f"<error reading log file: {e}>"]
