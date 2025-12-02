@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 # Internal helper functions for web search
-DDG_HTML_SEARCH = "https://duckduckgo.com/html/?q={query}"
+DDG_HTML_SEARCH = "https://duckduckgo.com/html"
 
 
 async def _web_search(query: str, top_k: int = 5, timeout: float = 8.0) -> List[Tuple[str, str]]:
@@ -28,7 +28,8 @@ async def _web_search(query: str, top_k: int = 5, timeout: float = 8.0) -> List[
     Returns a list of (title, url) pairs.
     """
     async with httpx.AsyncClient(timeout=timeout, headers={"User-Agent": "MulInOne/1.0"}) as client:
-        r = await client.get(DDG_HTML_SEARCH.format(query=httpx.QueryParams({"q": query})))
+        r = await client.get(DDG_HTML_SEARCH, params=httpx.QueryParams({"q": query}))
+        r.raise_for_status()
         html = r.text
     # very lightweight parse: extract results from <a class="result__a" href="...">Title</a>
     results: List[Tuple[str, str]] = []
@@ -45,6 +46,7 @@ async def _web_fetch(url: str, timeout: float = 8.0, max_chars: int = 5000) -> s
     """Fetch page content and return a cleaned text snippet."""
     async with httpx.AsyncClient(timeout=timeout, headers={"User-Agent": "MulInOne/1.0"}) as client:
         r = await client.get(url, follow_redirects=True)
+        r.raise_for_status()
         text = r.text
     # strip scripts/styles and tags
     text = re.sub(r"<script[\s\S]*?</script>", " ", text, flags=re.IGNORECASE)
@@ -92,7 +94,12 @@ async def web_search_tool(config: WebSearchToolConfig, builder):  # builder pres
             return WebSearchOutput(results=out)
         except Exception as e:
             logger.error("WebSearchTool failed: %s", e)
-            return WebSearchOutput(results=[])
+            fallback = WebSearchResult(
+                title="搜索失败",
+                url="https://duckduckgo.com",
+                snippet=f"搜索调用失败或网络不可用：{e}",
+            )
+            return WebSearchOutput(results=[fallback])
 
     async def _stream(input_data: WebSearchInput) -> AsyncGenerator[WebSearchOutput, None]:
         # Simple one-shot; stream emits a single chunk
