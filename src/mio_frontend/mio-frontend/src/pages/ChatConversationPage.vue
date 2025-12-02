@@ -1,5 +1,5 @@
 <template>
-  <div class="chat-conversation-page">
+  <q-page class="chat-conversation-page">
     <!-- Header with active agents -->
     <div class="chat-header">
       <div class="header-left">
@@ -47,7 +47,7 @@
     </div>
 
     <!-- Messages Area -->
-    <q-scroll-area ref="scrollArea" class="messages-container">
+    <q-scroll-area ref="scrollArea" class="messages-container" style="height: 100%;">
       <!-- Loading State -->
       <div v-if="loading" class="loading-container">
         <q-spinner color="primary" size="50px" />
@@ -88,7 +88,15 @@
             size="40px"
             class="message-avatar"
           >
-            {{ getAgentInitial(msg.sender) }}
+            <img
+              v-if="getPersonaAvatar(msg.sender)"
+              :src="getPersonaAvatar(msg.sender)"
+              alt="avatar"
+              @error="handleAvatarError(msg.sender)"
+            />
+            <template v-else>
+              {{ getAgentInitial(msg.sender) }}
+            </template>
           </q-avatar>
 
           <!-- Message Content -->
@@ -158,15 +166,7 @@
           </div>
 
           <!-- User Avatar -->
-          <q-avatar
-            v-if="msg.sender === 'user'"
-            color="primary"
-            text-color="white"
-            size="40px"
-            class="message-avatar"
-          >
-            <q-icon name="person" />
-          </q-avatar>
+          <!-- User avatar hidden by request -->
         </div>
       </div>
 
@@ -271,7 +271,15 @@
             >
               <q-item-section avatar>
                 <q-avatar :color="getAgentColor(persona.handle)" text-color="white">
-                  {{ persona.name.charAt(0) }}
+                  <img
+                    v-if="getPersonaAvatar(persona.handle)"
+                    :src="getPersonaAvatar(persona.handle)"
+                    alt="avatar"
+                    @error="handleAvatarError(persona.handle)"
+                  />
+                  <template v-else>
+                    {{ persona.name.charAt(0) }}
+                  </template>
                 </q-avatar>
               </q-item-section>
               <q-item-section>
@@ -355,7 +363,15 @@
         <q-card-section class="bg-gradient-primary text-white">
           <div class="row items-center">
             <q-avatar size="60px" :color="getAgentColor(selectedPersona.handle)" class="q-mr-md">
-              {{ selectedPersona.name.charAt(0) }}
+              <img
+                v-if="getPersonaAvatar(selectedPersona.handle)"
+                :src="getPersonaAvatar(selectedPersona.handle)"
+                alt="avatar"
+                @error="handleAvatarError(selectedPersona.handle)"
+              />
+              <template v-else>
+                {{ selectedPersona.name.charAt(0) }}
+              </template>
             </q-avatar>
             <div>
               <div class="text-h6">{{ selectedPersona.name }}</div>
@@ -455,11 +471,11 @@
         </q-card-actions>
       </q-card>
     </q-dialog>
-  </div>
+  </q-page>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed, nextTick, watch } from 'vue'
+import { ref, onMounted, computed, nextTick, watch, reactive } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useQuasar, QScrollArea } from 'quasar'
 import { 
@@ -490,6 +506,7 @@ const sending = ref(false)
 const inputValue = ref('')
 const scrollArea = ref<InstanceType<typeof QScrollArea> | null>(null)
 const inputRef = ref<any>(null)
+const avatarErrorFlags = reactive<Record<string, boolean>>({})
 
 // Dialog states
 const showAgentDialog = ref(false)
@@ -795,6 +812,34 @@ const getAgentInitial = (agentName: string | undefined): string => {
   return agentName ? agentName.charAt(0).toUpperCase() : 'A'
 }
 
+const findPersonaBySender = (sender?: string) => {
+  if (!sender) return null
+  return availablePersonas.value.find(
+    p => p.handle === sender || p.name === sender
+  ) || null
+}
+
+const buildAvatarSrc = (path?: string | null) => {
+  if (!path) return ''
+  if (path.startsWith('blob:')) return path
+  if (/^https?:\/\//i.test(path)) return path
+  const normalized = path.startsWith('/') ? path : `/${path}`
+  return new URL(normalized, window.location.origin).toString()
+}
+
+const getPersonaAvatar = (sender?: string) => {
+  const persona = findPersonaBySender(sender)
+  if (!persona || avatarErrorFlags[persona.handle || persona.name]) return ''
+  return buildAvatarSrc(persona.avatar_path)
+}
+
+const handleAvatarError = (sender?: string) => {
+  if (!sender) return
+  const persona = findPersonaBySender(sender)
+  const key = persona?.handle || persona?.name || sender
+  avatarErrorFlags[key] = true
+}
+
 // Message actions
 const copyMessage = (content: string) => {
   navigator.clipboard.writeText(content).then(() => {
@@ -953,7 +998,9 @@ watch(selectedPersonas, async (newValue, oldValue) => {
 .chat-conversation-page {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  height: calc(100vh - var(--q-header-height, 56px));
+  min-height: 0;
+  overflow: hidden;
   background: var(--color-background);
   font-family: var(--font-body);
 }
@@ -967,6 +1014,9 @@ watch(selectedPersonas, async (newValue, oldValue) => {
   background: var(--color-surface);
   border-bottom: var(--border-width) solid var(--color-muted, #e0e0e0);
   box-shadow: var(--shadow, 0 2px 4px rgba(0,0,0,0.05));
+  position: sticky;
+  top: 0;
+  z-index: 2;
 }
 
 .header-left {
@@ -1011,6 +1061,7 @@ watch(selectedPersonas, async (newValue, oldValue) => {
   flex: 1;
   padding: 16px 24px;
   background: var(--color-background);
+  min-height: 0;
 }
 
 .loading-container,
@@ -1173,6 +1224,10 @@ watch(selectedPersonas, async (newValue, oldValue) => {
   background: var(--color-surface);
   border-top: var(--border-width) solid var(--color-muted, #e0e0e0);
   padding: 12px 24px 16px;
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.06);
 }
 
 .attached-files {
