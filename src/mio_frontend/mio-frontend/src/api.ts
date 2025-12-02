@@ -338,7 +338,7 @@ export const updateSessionMeta = async (sessionId: string, payload: UpdateSessio
 };
 
 export const updateSessionParticipants = async (sessionId: string, personaIds: number[]): Promise<void> => {
-  await api.patch(`/sessions/${sessionId}/participants`, { persona_ids: personaIds });
+  await api.put(`/sessions/${sessionId}/participants`, { persona_ids: personaIds });
 };
 
 export const deleteSession = async (sessionId: string, username: string): Promise<void> => {
