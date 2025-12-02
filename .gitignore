@@ -118,6 +118,7 @@ dictionaries/
 # Containers / Docker
 docker-compose.override.yml
 docker-compose.*.local.yml
+!configs/docker-compose.milvus.local.yml
 .env.docker
 
 # CI / tooling
