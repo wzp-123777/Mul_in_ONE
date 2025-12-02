@@ -165,7 +165,51 @@ source .venv/bin/activate  # Windows: .venv\Scripts\activate
 ./scripts/bootstrap_toolkit.sh
 ```
 
-#### 3. 配置数据库
+#### 3. 配置环境变量 ⚠️ **必须**
+
+复制环境变量模板并配置：
+
+```bash
+cp .envrc.example .envrc
+```
+
+编辑 `.envrc` 文件，**必须配置**以下项：
+
+```bash
+# 数据库连接
+export DATABASE_URL="postgresql+asyncpg://postgres:postgres@localhost:5432/mul_in_one"
+
+# JWT 认证密钥（生产环境必须修改！）
+export JWT_SECRET="your-secret-key-change-in-production"
+
+# 生成安全的随机密钥（推荐）
+# openssl rand -hex 32
+
+# OAuth 配置（可选，如需第三方登录则取消注释）
+# export GITEE_CLIENT_ID="your-gitee-client-id"
+# export GITEE_CLIENT_SECRET="your-gitee-client-secret"
+# export GITHUB_CLIENT_ID="your-github-client-id"
+# export GITHUB_CLIENT_SECRET="your-github-client-secret"
+
+# 其他配置见 .envrc.example 中的详细注释
+```
+
+加载环境变量：
+
+```bash
+direnv allow  # 如果使用 direnv（推荐）
+# 或者手动加载
+source .envrc
+```
+
+> ⚠️ **重要安全提示**: 
+> - `.envrc` 包含敏感信息（API密钥、数据库密码、JWT密钥等）
+> - 该文件已自动加入 `.gitignore`，**请勿提交到版本控制系统**
+> - 生产环境务必使用强随机密钥，不要使用示例中的默认值
+
+> 📚 **认证系统文档**: 查看 [docs/authentication.md](docs/authentication.md) 了解完整的用户认证和 OAuth 配置指南
+
+#### 4. 配置数据库
 
 **项目内置PostgreSQL管理**:
 
@@ -193,7 +237,7 @@ export DATABASE_URL="postgresql+asyncpg://user:password@host:port/dbname"
 - 可移植性: 整个项目目录可以迁移到不同机器,无需重新配置
 - Unix Socket: 使用项目相对路径,避免权限和路径问题
 
-#### 4. 启动 Milvus
+#### 5. 启动 Milvus
 
 **使用项目脚本** (推荐):
 
@@ -218,7 +262,7 @@ docker run -d --name milvus-standalone \
 - 向量索引和集合数据完全本地化
 - 支持项目整体迁移
 
-#### 5. 启动后端服务
+#### 6. 启动后端服务
 
 ```bash
 # 方式 1: 使用启动脚本 (推荐)
@@ -240,7 +284,7 @@ uv run uvicorn mul_in_one_nemo.service.app:create_app \
 - **API 文档**: http://localhost:8000/docs (Swagger UI)
 - **健康检查**: http://localhost:8000/health
 
-#### 6. 启动前端应用
+#### 7. 启动前端应用
 
 ```bash
 # 进入前端目录
@@ -255,7 +299,7 @@ npm run dev
 
 前端将在 `http://localhost:5173` 运行
 
-### 7. 初始化配置
+#### 8. 初始化配置
 
 1. **访问 Web 界面**: 打开 http://localhost:5173
 2. **创建 API Profile**: 导航到 "API Profiles" 页面
@@ -265,7 +309,7 @@ npm run dev
 4. **创建 Persona**: 添加 AI 人格,设置名称、handle、语气、背景等
 5. **开始对话**: 在 "Sessions" 页面创建新会话,选择 Target Agents 开始聊天!
 
-### 8. 工具优先（NAT）配置与行为
+#### 9. 工具优先（NAT）配置与行为
 - **已注册工具**: `WebSearch` 与 `RagQuery`
 - **调用方式**: LLM 在对话过程中按需通过函数调用触发工具,无需用户使用内联触发器
 - **工具实现**:

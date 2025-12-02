@@ -8,6 +8,7 @@ from logging.handlers import RotatingFileHandler
 
 from fastapi import FastAPI
 
+from mul_in_one_nemo.auth.routes import router as auth_router
 from mul_in_one_nemo.service.routers import personas, sessions, debug
 
 
@@ -72,6 +73,7 @@ def create_app() -> FastAPI:
         uvicorn_logger.propagate = True
         uvicorn_logger.setLevel(logging.INFO)
 
+    app.include_router(auth_router, prefix="/api")
     app.include_router(sessions.router, prefix="/api")
     app.include_router(personas.router, prefix="/api/personas")
     app.include_router(debug.router, prefix="/api")

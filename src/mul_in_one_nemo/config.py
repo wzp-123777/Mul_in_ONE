@@ -40,6 +40,11 @@ class Settings:
     stop_patience: int = 2  # 最近 K 轮
     stop_heat_threshold: float = 0.6  # 活跃度阈值
     stop_similarity_threshold: float = 0.9  # 冗余相似度阈值
+    
+    # Authentication settings
+    jwt_secret: str = "changeme-in-production"  # JWT 密钥
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 60  # 访问令牌有效期（分钟）
 
     # Legacy fields for backward compatibility (optional)
     persona_file: Path | None = None
@@ -125,6 +130,12 @@ class Settings:
         redis_url = os.environ.get("REDIS_URL")
         encryption_key = os.environ.get("MUL_IN_ONE_ENCRYPTION_KEY", "")
         
+        # JWT authentication settings
+        jwt_secret = os.environ.get("JWT_SECRET", "changeme-in-production")
+        jwt_algorithm = os.environ.get("JWT_ALGORITHM", "HS256")
+        access_token_expire_str = os.environ.get("ACCESS_TOKEN_EXPIRE_MINUTES")
+        access_token_expire = int(access_token_expire_str) if access_token_expire_str else 60
+        
         return cls(
             database_url=database_url,
             persona_file=persona_path,
@@ -142,4 +153,7 @@ class Settings:
             api_configuration=api_configuration,
             redis_url=redis_url,
             encryption_key=encryption_key,
+            jwt_secret=jwt_secret,
+            jwt_algorithm=jwt_algorithm,
+            access_token_expire_minutes=access_token_expire,
         )

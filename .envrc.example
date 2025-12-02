@@ -15,7 +15,7 @@ export DATABASE_URL="postgresql+asyncpg://postgres:postgres@localhost:5432/mul_i
 
 # --- JWT Authentication (FastAPI-Users) ---
 # 生产环境请使用强随机密钥: openssl rand -hex 32
-export JWT_SECRET="745779152e48d58d36497d3910a562895add2b09780b4b878aac677abbd4968e"
+export JWT_SECRET="your-secret-key-change-in-production"
 export JWT_ALGORITHM="HS256"
 export ACCESS_TOKEN_EXPIRE_MINUTES="60"
 

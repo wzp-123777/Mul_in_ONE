@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from fastapi_users.db import SQLAlchemyBaseUserTable, SQLAlchemyBaseOAuthAccountTable
 from sqlalchemy import (
     Boolean,
     Column,
@@ -32,20 +33,36 @@ session_participants_table = Table(
 )
 
 
-class User(Base):
-    """Merged User (formerly Tenant + User)."""
+class User(SQLAlchemyBaseUserTable[int], Base):
+    """User model compatible with FastAPI-Users."""
     __tablename__ = "users"
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    username: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
-    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # FastAPI-Users base fields (automatically inherited):
+    # - id: Mapped[int] (primary key, autoincrement)
+    # - email: Mapped[str] (unique, indexed)
+    # - hashed_password: Mapped[str]
+    # - is_active: Mapped[bool] (default True)
+    # - is_superuser: Mapped[bool] (default False)
+    # - is_verified: Mapped[bool] (default False)
+    
+    # Additional custom fields
+    username: Mapped[str] = mapped_column(String(128), unique=True, nullable=False, index=True)
     display_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     role: Mapped[str] = mapped_column(String(32), default="member")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     embedding_api_profile_id: Mapped[int | None] = mapped_column(ForeignKey("api_profiles.id"), nullable=True)
 
     sessions: Mapped[list["Session"]] = relationship("Session", back_populates="user", cascade="all, delete-orphan")
+    oauth_accounts: Mapped[list["OAuthAccount"]] = relationship(
+        "OAuthAccount", back_populates="user", cascade="all, delete-orphan", lazy="joined"
+    )
+
+
+class OAuthAccount(SQLAlchemyBaseOAuthAccountTable[int], Base):
+    """OAuth账户表，支持 Gitee/GitHub 等第三方登录."""
+    __tablename__ = "oauth_accounts"
+    
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    user: Mapped["User"] = relationship("User", back_populates="oauth_accounts")
 
 
 class APIProfile(Base):

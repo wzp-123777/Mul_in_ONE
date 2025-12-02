@@ -694,6 +694,10 @@ Requires-Dist: lxml>=5.2.2
 Requires-Dist: langchain-openai>=0.1.0
 Requires-Dist: langchain-google-genai>=2.0.0
 Requires-Dist: pytest-asyncio>=0.23
+Requires-Dist: fastapi-users[sqlalchemy]>=13.0
+Requires-Dist: httpx-oauth>=0.13
+Requires-Dist: python-jose[cryptography]>=3.3
+Requires-Dist: passlib[bcrypt]>=1.7
 Provides-Extra: dev
 Requires-Dist: pytest>=8.0; extra == "dev"
 Requires-Dist: pytest-asyncio>=0.23; extra == "dev"
