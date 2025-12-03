@@ -40,8 +40,6 @@ const setStoredValue = (key: string, value: string | null) => {
   }
 };
 
-const readStoredValue = (key: string) => localStorage.getItem(key) || '';
-
 // --- Auth State ---
 export const authState = reactive({
   username: localStorage.getItem(STORAGE_KEYS.username) || '',
@@ -193,6 +191,7 @@ export interface APIProfile {
   created_at: string;
   is_embedding_model: boolean;
   embedding_dim?: number | null;
+  api_key_preview?: string;
 }
 
 export interface CreateAPIProfilePayload {
@@ -231,6 +230,7 @@ export interface Persona {
   api_profile_id?: number | null;
   is_default: boolean;
   avatar_path?: string | null;
+  api_model?: string;
 }
 
 export interface CreatePersonaPayload {
@@ -574,7 +574,7 @@ export const fetchLogs = async (lines: number, level?: LogLevel): Promise<LogsPa
 if (typeof window !== 'undefined') {
   window.addEventListener('storage', (event) => {
     if (!event.key) return;
-    if (Object.values(STORAGE_KEYS).includes(event.key)) {
+    if (Object.values(STORAGE_KEYS).includes(event.key as typeof STORAGE_KEYS[keyof typeof STORAGE_KEYS])) {
       refreshAuthStateFromStorage();
     }
   });

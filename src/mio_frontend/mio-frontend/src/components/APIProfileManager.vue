@@ -82,7 +82,8 @@ const newProfile = reactive({
   base_url: '',
   model: '',
   api_key: '',
-  temperature: 0.4
+  temperature: 0.4,
+  is_embedding_model: false
 });
 
 const isValid = computed(() => {

@@ -103,13 +103,13 @@ const confirmDialog = ref<{ open: boolean; target: AdminUser | null; loading: bo
 const rowLoading = ref<Record<number, boolean>>({})
 
 const columns = computed(() => [
-  { name: 'id', label: t('admin.columns.id'), field: 'id', sortable: true, align: 'left' },
-  { name: 'username', label: t('admin.columns.username'), field: 'username', sortable: true, align: 'left' },
-  { name: 'email', label: t('admin.columns.email'), field: 'email', sortable: true, align: 'left' },
-  { name: 'role', label: t('admin.columns.role'), field: 'role', sortable: true, align: 'left' },
-  { name: 'is_superuser', label: t('admin.columns.permission'), field: 'is_superuser', sortable: true, align: 'left' },
-  { name: 'created_at', label: t('admin.columns.createdAt'), field: 'created_at', sortable: true, align: 'left' },
-  { name: 'actions', label: t('admin.columns.actions'), field: 'actions', align: 'right' }
+  { name: 'id', label: t('admin.columns.id'), field: 'id', sortable: true, align: 'left' as const },
+  { name: 'username', label: t('admin.columns.username'), field: 'username', sortable: true, align: 'left' as const },
+  { name: 'email', label: t('admin.columns.email'), field: 'email', sortable: true, align: 'left' as const },
+  { name: 'role', label: t('admin.columns.role'), field: 'role', sortable: true, align: 'left' as const },
+  { name: 'is_superuser', label: t('admin.columns.permission'), field: 'is_superuser', sortable: true, align: 'left' as const },
+  { name: 'created_at', label: t('admin.columns.createdAt'), field: 'created_at', sortable: true, align: 'left' as const },
+  { name: 'actions', label: t('admin.columns.actions'), field: 'actions', align: 'right' as const }
 ])
 
 const formatDate = (value: string) => {

@@ -872,20 +872,24 @@ const startCropDrag = (event: MouseEvent | TouchEvent) => {
   if (!avatarCrop.imageUrl) return
   avatarCrop.dragging = true
   const point = 'touches' in event ? event.touches[0] : event
-  avatarCrop.startX = point.clientX
-  avatarCrop.startY = point.clientY
+  if (point) {
+    avatarCrop.startX = point.clientX
+    avatarCrop.startY = point.clientY
+  }
 }
 
 const onCropDrag = (event: MouseEvent | TouchEvent) => {
   if (!avatarCrop.dragging) return
   const point = 'touches' in event ? event.touches[0] : event
-  const dx = point.clientX - avatarCrop.startX
-  const dy = point.clientY - avatarCrop.startY
-  avatarCrop.offsetX += dx
-  avatarCrop.offsetY += dy
-  clampOffset()
-  avatarCrop.startX = point.clientX
-  avatarCrop.startY = point.clientY
+  if (point) {
+    const dx = point.clientX - avatarCrop.startX
+    const dy = point.clientY - avatarCrop.startY
+    avatarCrop.offsetX += dx
+    avatarCrop.offsetY += dy
+    clampOffset()
+    avatarCrop.startX = point.clientX
+    avatarCrop.startY = point.clientY
+  }
 }
 
 const endCropDrag = () => {

@@ -983,7 +983,8 @@ export const i18n = createI18n({
 })
 
 export function setLocale(locale: string) {
-  i18n.global.locale.value = locale
+  const validLocale = locale as 'en' | 'zh';
+  i18n.global.locale.value = validLocale
   if (typeof localStorage !== 'undefined') {
     localStorage.setItem(STORAGE_KEY, locale)
   }
