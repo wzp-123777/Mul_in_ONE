@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - 'src/mio_frontend/mio_frontend/**'
+      - 'src/mio_frontend/mio-frontend/**'
       - '.github/workflows/**'
 
 permissions:
