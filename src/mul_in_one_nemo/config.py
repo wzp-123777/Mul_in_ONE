@@ -1,21 +1,19 @@
-"""Runtime settings and helpers."""
-
-from __future__ import annotations
-
 from dataclasses import dataclass
 from pathlib import Path
 import os
 
+from dotenv import load_dotenv
+
+# Load environment variables from .env file if present
+# Try to find .env in the project root (3 levels up from this file)
+env_path = Path(__file__).resolve().parent.parent.parent / ".env"
+if env_path.exists():
+    load_dotenv(dotenv_path=env_path, override=True)
+else:
+    # Fallback to default behavior (current working directory)
+    load_dotenv(override=True)
+
 from .api_config import APIConfiguration, load_api_configuration
-
-# These settings are now managed in .envrc and loaded directly.
-# DEFAULT_NIM_MODEL = ""
-# DEFAULT_NIM_BASE_URL = ""
-# DEFAULT_MAX_AGENTS_PER_TURN = 2
-# DEFAULT_MEMORY_WINDOW = 8
-# DEFAULT_TEMPERATURE = 0.4
-
-
 def _env_path(name: str, default: Path) -> Path:
     value = os.environ.get(name)
     if value:
@@ -157,3 +155,4 @@ class Settings:
             jwt_algorithm=jwt_algorithm,
             access_token_expire_minutes=access_token_expire,
         )
+
