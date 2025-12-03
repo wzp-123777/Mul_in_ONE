@@ -1,0 +1,1 @@
+uv run uvicorn mul_in_one_nemo.service.app:create_app --factory --reload --host 0.0.0.0 --port 8000 --reload-exclude "external/*" --reload-exclude ".postgresql/*" --reload-exclude ".milvus/*" --reload-exclude "node_modules/*" --reload-exclude ".venv/*"
